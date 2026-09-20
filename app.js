@@ -402,7 +402,6 @@ function openRecordDialog(id) {
     renderExtraDoors(record.extraDoors || []);
   } else {
     el("dialogTitle").textContent = "Add installation";
-    el("install_date").value = new Date().toISOString().slice(0, 10);
   }
 
   el("recordDialog").showModal();
@@ -430,8 +429,8 @@ async function saveRecord(event) {
     payload[name] = value === "" ? null : value;
   });
 
-  if (!payload.address_line1 || !payload.city || !payload.state || !payload.install_date) {
-    showToast("Address, city, state and install date are required.", true);
+  if (!payload.address_line1 || !payload.city || !payload.state) {
+    showToast("Address, city and state are required.", true);
     return;
   }
 
