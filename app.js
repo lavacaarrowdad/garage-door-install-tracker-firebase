@@ -34,31 +34,25 @@ const auth = getAuth(firebaseApp);
 const db = getFirestore(firebaseApp);
 
 let currentUser = null;
-let records = [];
-let editingId = null;
+let properties = [];
+let editingPropertyId = null;
 let map = null;
 let markerLayer = null;
 let pinPickerMap = null;
 let pinPickerMarker = null;
-let pinPickerRecordId = null;
+let pinPickerPropertyId = null;
 const geocodeAttempted = new Set();
 
 const el = (id) => document.getElementById(id);
-const fields = [
-  "customer_name", "address_line1", "city", "state", "postal_code",
-  "install_date", "manufacturer", "model_number", "door_size",
-  "spring_size", "door_type", "color", "lift_type", "spring_count", "notes"
-];
-const extraDoorFields = [
-  "manufacturer", "model_number", "door_size", "spring_size",
-  "door_type", "color", "lift_type", "spring_count"
-];
+const propertyFields = ["customer_name", "address_line1", "city", "state", "postal_code", "property_notes"];
+const doorFields = ["manufacturer", "model_number", "door_size", "spring_size", "spring_count", "door_type", "color", "lift_type", "install_date", "notes"];
+const openerFields = ["manufacturer", "model_number", "serial_number", "opener_type", "horsepower", "install_date", "notes"];
+const serviceFields = ["service_date", "service_type", "asset_reference", "description", "notes"];
 
 document.addEventListener("DOMContentLoaded", init);
 
 async function init() {
   bindEvents();
-
   try {
     await setPersistence(auth, browserLocalPersistence);
   } catch (error) {
@@ -81,23 +75,23 @@ function bindEvents() {
     }
   });
 
-  el("addBtn").addEventListener("click", () => openRecordDialog());
-  el("addExtraDoorBtn").addEventListener("click", () => addExtraDoorCard());
+  el("addPropertyBtn").addEventListener("click", () => openPropertyDialog());
+  el("addDoorBtn").addEventListener("click", () => addDoorCard());
+  el("addOpenerBtn").addEventListener("click", () => addOpenerCard());
+  el("addServiceBtn").addEventListener("click", () => addServiceCard());
 
   el("searchForm").addEventListener("submit", (event) => {
     event.preventDefault();
-    renderRecords();
+    renderProperties();
     renderMapMarkers();
   });
-
   el("searchInput").addEventListener("input", () => {
-    renderRecords();
+    renderProperties();
     renderMapMarkers();
   });
-
   el("clearSearchBtn").addEventListener("click", () => {
     el("searchInput").value = "";
-    renderRecords();
+    renderProperties();
     renderMapMarkers();
     el("searchInput").focus();
   });
@@ -105,24 +99,26 @@ function bindEvents() {
   el("mapToggleBtn").addEventListener("click", toggleMap);
   el("retryPinsBtn").addEventListener("click", retryMapPins);
   el("exportBtn").addEventListener("click", exportCsv);
+
+  el("propertyForm").addEventListener("submit", saveProperty);
+  el("closePropertyDialogBtn").addEventListener("click", closePropertyDialog);
+  el("cancelPropertyBtn").addEventListener("click", closePropertyDialog);
+
   el("closePinDialogBtn").addEventListener("click", closePinPicker);
   el("cancelPinBtn").addEventListener("click", closePinPicker);
   el("savePinBtn").addEventListener("click", savePinPicker);
   el("openAddressBtn").addEventListener("click", () => {
-    const record = records.find((item) => item.id === pinPickerRecordId);
-    if (!record) return;
+    const property = properties.find((item) => item.id === pinPickerPropertyId);
+    if (!property) return;
     window.open(
-      "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(fullAddress(record)),
+      "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(fullAddress(property)),
       "_blank",
       "noopener"
     );
   });
-  el("recordForm").addEventListener("submit", saveRecord);
-  el("closeDialogBtn").addEventListener("click", closeRecordDialog);
-  el("cancelBtn").addEventListener("click", closeRecordDialog);
 
-  el("recordDialog").addEventListener("click", (event) => {
-    if (event.target === el("recordDialog")) closeRecordDialog();
+  el("propertyDialog").addEventListener("click", (event) => {
+    if (event.target === el("propertyDialog")) closePropertyDialog();
   });
 }
 
@@ -134,17 +130,16 @@ async function syncAuthView() {
 
   if (signedIn) {
     el("userEmail").textContent = currentUser.email || "";
-    await loadRecords();
+    await loadProperties();
   } else {
-    records = [];
-    el("recordsList").innerHTML = "";
-    el("recordCount").textContent = "0";
+    properties = [];
+    el("propertiesList").innerHTML = "";
+    el("propertyCount").textContent = "0";
   }
 }
 
 async function signIn(event) {
   event.preventDefault();
-
   const email = el("email").value.trim();
   const password = el("password").value;
   const button = el("signInBtn");
@@ -183,7 +178,43 @@ function setAuthMessage(message, isError = false) {
   el("authMessage").style.color = isError ? "#fecdd3" : "";
 }
 
-async function loadRecords() {
+function normalizeProperty(raw) {
+  const doors = Array.isArray(raw.doors) ? raw.doors.map((door) => ({ ...door })) : [];
+  const hasLegacyDoor = [
+    raw.manufacturer, raw.model_number, raw.door_size, raw.spring_size,
+    raw.spring_count, raw.door_type, raw.color, raw.lift_type, raw.install_date
+  ].some((value) => value !== null && value !== undefined && String(value).trim() !== "");
+
+  let needsMigration = false;
+  if (!doors.length && hasLegacyDoor) {
+    doors.push({
+      manufacturer: raw.manufacturer ?? null,
+      model_number: raw.model_number ?? null,
+      door_size: raw.door_size ?? null,
+      spring_size: raw.spring_size ?? null,
+      spring_count: raw.spring_count ?? null,
+      door_type: raw.door_type ?? null,
+      color: raw.color ?? null,
+      lift_type: raw.lift_type ?? null,
+      install_date: raw.install_date ?? null,
+      notes: null
+    });
+    needsMigration = true;
+  }
+
+  return {
+    ...raw,
+    doors,
+    openers: Array.isArray(raw.openers) ? raw.openers.map((item) => ({ ...item })) : [],
+    serviceCalls: Array.isArray(raw.serviceCalls)
+      ? raw.serviceCalls.map((item) => ({ ...item }))
+      : (Array.isArray(raw.service_calls) ? raw.service_calls.map((item) => ({ ...item })) : []),
+    property_notes: raw.property_notes ?? raw.notes ?? null,
+    _needsMigration: needsMigration
+  };
+}
+
+async function loadProperties() {
   if (!currentUser) return;
 
   try {
@@ -193,248 +224,324 @@ async function loadRecords() {
     );
 
     const snapshot = await getDocs(q);
-    records = snapshot.docs.map((snap) => ({ id: snap.id, ...snap.data() }));
+    properties = snapshot.docs.map((snap) => normalizeProperty({ id: snap.id, ...snap.data() }));
 
-    records.sort((a, b) => {
-      const dateCompare = String(b.install_date || "").localeCompare(String(a.install_date || ""));
-      if (dateCompare !== 0) return dateCompare;
-      const bTime = b.createdAt?.seconds || 0;
-      const aTime = a.createdAt?.seconds || 0;
-      return bTime - aTime;
+    properties.sort((a, b) => {
+      const customerCompare = String(a.customer_name || "").localeCompare(String(b.customer_name || ""));
+      if (customerCompare !== 0) return customerCompare;
+      return fullAddress(a).localeCompare(fullAddress(b));
     });
 
-    renderRecords();
+    renderProperties();
     ensureMap();
     renderMapMarkers();
+    void migrateLegacyProperties();
     void backfillMissingCoordinates();
   } catch (error) {
     console.error("Load failed:", error);
-    showToast("Could not load installations: " + friendlyError(error), true);
+    showToast("Could not load properties: " + friendlyError(error), true);
   }
 }
 
-function getFilteredRecords() {
-  const queryText = el("searchInput").value.trim().toLowerCase();
-  if (!queryText) return records;
+async function migrateLegacyProperties() {
+  const legacy = properties.filter((property) => property._needsMigration);
+  for (const property of legacy) {
+    try {
+      await updateDoc(doc(db, "installations", property.id), {
+        doors: property.doors,
+        property_notes: property.property_notes ?? null,
+        updatedAt: serverTimestamp()
+      });
+      property._needsMigration = false;
+    } catch (error) {
+      console.warn("Could not migrate legacy property record:", error);
+    }
+  }
+}
 
+function getFilteredProperties() {
+  const queryText = el("searchInput").value.trim().toLowerCase();
+  if (!queryText) return properties;
   const terms = queryText.split(/\s+/).filter(Boolean);
 
-  return records.filter((record) => {
+  return properties.filter((property) => {
     const haystack = [
-      record.customer_name,
-      record.address_line1,
-      record.city,
-      record.state,
-      record.postal_code,
-      record.manufacturer,
-      record.model_number,
-      record.door_size,
-      record.spring_size,
-      record.spring_count,
-      record.door_type,
-      record.color,
-      record.lift_type,
-      record.install_date,
-      formatDate(record.install_date),
-      record.notes,
-      JSON.stringify(record.extraDoors || [])
+      property.customer_name,
+      property.address_line1,
+      property.city,
+      property.state,
+      property.postal_code,
+      property.property_notes,
+      JSON.stringify(property.doors || []),
+      JSON.stringify(property.openers || []),
+      JSON.stringify(property.serviceCalls || [])
     ].map((value) => String(value || "").toLowerCase()).join(" ");
 
     return terms.every((term) => haystack.includes(term));
   });
 }
 
-function renderRecords() {
+function renderProperties() {
+  const filtered = getFilteredProperties();
   const queryText = el("searchInput").value.trim();
-  const filtered = getFilteredRecords();
 
-  el("recordCount").textContent = records.length;
+  el("propertyCount").textContent = properties.length;
   el("filterCount").textContent = queryText ? filtered.length + " matching" : "";
-  el("emptyState").classList.toggle("hidden", records.length !== 0);
+  el("emptyState").classList.toggle("hidden", properties.length !== 0);
 
   if (!filtered.length) {
-    el("recordsList").innerHTML = records.length
+    el("propertiesList").innerHTML = properties.length
       ? '<div class="empty-state"><h3>No matches</h3><p>Try a different search.</p></div>'
       : "";
     return;
   }
 
-  el("recordsList").innerHTML = filtered.map(recordCardHtml).join("");
+  el("propertiesList").innerHTML = filtered.map(propertyCardHtml).join("");
 
-  document.querySelectorAll("[data-edit]").forEach((button) => {
-    button.addEventListener("click", () => openRecordDialog(button.dataset.edit));
-  });
-  document.querySelectorAll("[data-delete]").forEach((button) => {
-    button.addEventListener("click", () => deleteRecord(button.dataset.delete));
+  document.querySelectorAll("[data-manage]").forEach((button) => {
+    button.addEventListener("click", () => openPropertyDialog(button.dataset.manage));
   });
   document.querySelectorAll("[data-map]").forEach((button) => {
-    button.addEventListener("click", () => focusRecordOnMap(button.dataset.map));
+    button.addEventListener("click", () => focusPropertyOnMap(button.dataset.map));
+  });
+  document.querySelectorAll("[data-delete]").forEach((button) => {
+    button.addEventListener("click", () => deleteProperty(button.dataset.delete));
   });
 }
 
-function recordCardHtml(record) {
-  const address = fullAddress(record);
-  const extraDoors = Array.isArray(record.extraDoors) ? record.extraDoors : [];
-  const details = [
-    ["Model", joinParts(record.manufacturer, record.model_number)],
-    ["Door size", record.door_size],
-    ["Spring", record.spring_size],
-    ["Type", record.door_type],
-    ["Color", record.color],
-    ["Lift", record.lift_type]
-  ].filter((item) => item[1]);
+function propertyCardHtml(property) {
+  const doors = property.doors || [];
+  const openers = property.openers || [];
+  const serviceCalls = sortServiceCalls(property.serviceCalls || []);
+  const recent = serviceCalls.slice(0, 3);
 
-  return '<article class="record-card">' +
+  return '<article class="record-card property-card">' +
     '<div class="record-top"><div>' +
-      (record.customer_name ? '<div class="eyebrow">' + esc(record.customer_name) + '</div>' : '') +
-      '<div class="record-address">' + esc(address || "No address") + '</div>' +
-    '</div><div class="record-date">' + esc(formatDate(record.install_date)) + '</div></div>' +
-    '<div class="record-details">' +
-      details.map((item) => '<div class="detail"><span>' + esc(item[0]) + '</span><strong>' + esc(item[1]) + '</strong></div>').join("") +
+      (property.customer_name ? '<div class="eyebrow">' + esc(property.customer_name) + '</div>' : '') +
+      '<div class="record-address">' + esc(fullAddress(property) || "No address") + '</div>' +
+    '</div></div>' +
+    '<div class="property-counts">' +
+      '<span><strong>' + doors.length + '</strong> door' + (doors.length === 1 ? '' : 's') + '</span>' +
+      '<span><strong>' + openers.length + '</strong> opener' + (openers.length === 1 ? '' : 's') + '</span>' +
+      '<span><strong>' + serviceCalls.length + '</strong> service call' + (serviceCalls.length === 1 ? '' : 's') + '</span>' +
     '</div>' +
-    (extraDoors.length
-      ? '<div class="extra-door-summary-list">' +
-        extraDoors.map((door, index) =>
-          '<div class="extra-door-summary"><strong>Door ' + (index + 2) + '</strong><span>' +
-          esc(extraDoorSummary(door)) + '</span></div>'
-        ).join("") +
-        '</div>'
-      : '') +
-    (record.notes ? '<p class="muted">' + esc(record.notes) + '</p>' : '') +
+    (doors.length ? '<div class="property-subsection"><span class="subsection-title">Doors</span>' +
+      doors.slice(0, 3).map((door, index) => '<div class="asset-line"><strong>Door ' + (index + 1) + '</strong><span>' + esc(doorSummary(door)) + '</span></div>').join("") +
+      (doors.length > 3 ? '<div class="muted">+' + (doors.length - 3) + ' more</div>' : '') +
+      '</div>' : '') +
+    (openers.length ? '<div class="property-subsection"><span class="subsection-title">Openers</span>' +
+      openers.slice(0, 3).map((opener, index) => '<div class="asset-line"><strong>Opener ' + (index + 1) + '</strong><span>' + esc(openerSummary(opener)) + '</span></div>').join("") +
+      (openers.length > 3 ? '<div class="muted">+' + (openers.length - 3) + ' more</div>' : '') +
+      '</div>' : '') +
+    (recent.length ? '<div class="property-subsection"><span class="subsection-title">Recent service history</span>' +
+      recent.map((call) => '<div class="service-line"><strong>' + esc(formatDate(call.service_date) || "No date") + '</strong><span>' + esc(serviceSummary(call)) + '</span></div>').join("") +
+      (serviceCalls.length > 3 ? '<div class="muted">+' + (serviceCalls.length - 3) + ' older service call' + (serviceCalls.length - 3 === 1 ? '' : 's') + '</div>' : '') +
+      '</div>' : '') +
+    (property.property_notes ? '<p class="muted">' + esc(property.property_notes) + '</p>' : '') +
     '<div class="record-actions">' +
-      '<button class="button secondary small" data-edit="' + esc(record.id) + '">Edit</button>' +
-      '<button class="button secondary small" data-map="' + esc(record.id) + '">' +
-        (record.latitude != null && record.longitude != null ? "Map" : "Set pin") +
+      '<button class="button primary small" data-manage="' + esc(property.id) + '">Manage</button>' +
+      '<button class="button secondary small" data-map="' + esc(property.id) + '">' +
+        (property.latitude != null && property.longitude != null ? "Map" : "Set pin") +
       '</button>' +
-      '<button class="button danger small" data-delete="' + esc(record.id) + '">Delete</button>' +
+      '<button class="button danger small" data-delete="' + esc(property.id) + '">Delete</button>' +
     '</div>' +
   '</article>';
 }
 
-function extraDoorSummary(door) {
+function doorSummary(door) {
   const parts = [
     joinParts(door.manufacturer, door.model_number),
     door.door_size,
-    door.spring_size ? "Spring " + door.spring_size : "",
     door.door_type,
     door.color,
     door.lift_type
   ].filter(Boolean);
-  return parts.join(" • ") || "Additional door";
+  return parts.join(" • ") || "Garage door";
 }
 
-function addExtraDoorCard(door = {}) {
-  const container = el("extraDoorsContainer");
+function openerSummary(opener) {
+  const parts = [
+    joinParts(opener.manufacturer, opener.model_number),
+    opener.opener_type,
+    opener.horsepower,
+    opener.serial_number ? "S/N " + opener.serial_number : ""
+  ].filter(Boolean);
+  return parts.join(" • ") || "Garage door opener";
+}
+
+function serviceSummary(call) {
+  const parts = [call.service_type, call.asset_reference, call.description].filter(Boolean);
+  return parts.join(" • ") || call.notes || "Service call";
+}
+
+function sortServiceCalls(calls) {
+  return [...calls].sort((a, b) => String(b.service_date || "").localeCompare(String(a.service_date || "")));
+}
+
+function openPropertyDialog(id) {
+  editingPropertyId = id || null;
+  el("propertyForm").reset();
+  el("doorsContainer").innerHTML = "";
+  el("openersContainer").innerHTML = "";
+  el("serviceContainer").innerHTML = "";
+
+  if (editingPropertyId) {
+    const property = properties.find((item) => item.id === editingPropertyId);
+    if (!property) return;
+
+    el("propertyDialogTitle").textContent = "Manage property";
+    propertyFields.forEach((name) => {
+      el(name).value = property[name] ?? "";
+    });
+
+    (property.doors || []).forEach((door) => addDoorCard(door));
+    (property.openers || []).forEach((opener) => addOpenerCard(opener));
+    sortServiceCalls(property.serviceCalls || []).forEach((call) => addServiceCard(call));
+  } else {
+    el("propertyDialogTitle").textContent = "Add property";
+  }
+
+  el("propertyDialog").showModal();
+}
+
+function closePropertyDialog() {
+  editingPropertyId = null;
+  el("propertyDialog").close();
+}
+
+function addDoorCard(door = {}) {
   const card = document.createElement("div");
-  card.className = "extra-door-card";
+  card.className = "asset-editor";
   card.innerHTML =
-    '<div class="extra-door-card-header">' +
-      '<strong>Additional door</strong>' +
-      '<button class="button danger small remove-extra-door" type="button">Remove</button>' +
-    '</div>' +
+    '<div class="asset-editor-header"><strong>Door</strong><button class="button danger small remove-asset" type="button">Remove</button></div>' +
     '<div class="extra-door-grid">' +
       '<label>Manufacturer<input data-door-field="manufacturer" placeholder="Clopay, Wayne Dalton..."></label>' +
       '<label>Model #<input data-door-field="model_number"></label>' +
       '<label>Door size<input data-door-field="door_size" placeholder="16 x 7"></label>' +
       '<label>Spring size<input data-door-field="spring_size" placeholder=".250 x 2 x 31"></label>' +
+      '<label>Number of springs<input data-door-field="spring_count" type="number" min="0" step="1"></label>' +
       '<label>Door type<input data-door-field="door_type" list="doorTypes" placeholder="Raised panel"></label>' +
       '<label>Color<input data-door-field="color" list="colors" placeholder="White"></label>' +
       '<label>Lift<input data-door-field="lift_type" list="liftTypes" placeholder="Standard lift"></label>' +
-      '<label>Number of springs<input data-door-field="spring_count" type="number" min="0" step="1"></label>' +
+      '<label>Install date<input data-door-field="install_date" type="date"></label>' +
+      '<label class="span-2">Door notes<textarea data-door-field="notes" rows="2"></textarea></label>' +
     '</div>';
 
-  extraDoorFields.forEach((name) => {
-    const input = card.querySelector('[data-door-field="' + name + '"]');
-    const value = door[name];
-    input.value = value == null ? "" : value;
-  });
-
-  card.querySelector(".remove-extra-door").addEventListener("click", () => {
+  fillAssetCard(card, doorFields, "door-field", door);
+  card.querySelector(".remove-asset").addEventListener("click", () => {
     card.remove();
-    renumberExtraDoors();
+    renumberEditors("doorsContainer", "Door");
   });
-
-  container.appendChild(card);
-  renumberExtraDoors();
+  el("doorsContainer").appendChild(card);
+  renumberEditors("doorsContainer", "Door");
 }
 
-function renumberExtraDoors() {
-  el("extraDoorsContainer").querySelectorAll(".extra-door-card").forEach((card, index) => {
-    const title = card.querySelector(".extra-door-card-header strong");
-    if (title) title.textContent = "Door " + (index + 2);
+function addOpenerCard(opener = {}) {
+  const card = document.createElement("div");
+  card.className = "asset-editor";
+  card.innerHTML =
+    '<div class="asset-editor-header"><strong>Opener</strong><button class="button danger small remove-asset" type="button">Remove</button></div>' +
+    '<div class="extra-door-grid">' +
+      '<label>Manufacturer<input data-opener-field="manufacturer" placeholder="LiftMaster, Genie..."></label>' +
+      '<label>Model #<input data-opener-field="model_number"></label>' +
+      '<label>Serial #<input data-opener-field="serial_number"></label>' +
+      '<label>Opener type<input data-opener-field="opener_type" list="openerTypes" placeholder="Belt drive"></label>' +
+      '<label>HP / rating<input data-opener-field="horsepower" placeholder="3/4 HP"></label>' +
+      '<label>Install date<input data-opener-field="install_date" type="date"></label>' +
+      '<label class="span-2">Opener notes<textarea data-opener-field="notes" rows="2"></textarea></label>' +
+    '</div>';
+
+  fillAssetCard(card, openerFields, "opener-field", opener);
+  card.querySelector(".remove-asset").addEventListener("click", () => {
+    card.remove();
+    renumberEditors("openersContainer", "Opener");
   });
+  el("openersContainer").appendChild(card);
+  renumberEditors("openersContainer", "Opener");
 }
 
-function renderExtraDoors(doors) {
-  el("extraDoorsContainer").innerHTML = "";
-  if (!Array.isArray(doors)) return;
-  doors.forEach((door) => addExtraDoorCard(door));
-}
+function addServiceCard(call = {}) {
+  const card = document.createElement("div");
+  card.className = "asset-editor service-editor";
+  card.innerHTML =
+    '<div class="asset-editor-header"><strong>Service call</strong><button class="button danger small remove-asset" type="button">Remove</button></div>' +
+    '<div class="extra-door-grid">' +
+      '<label>Service date<input data-service-field="service_date" type="date"></label>' +
+      '<label>Type<select data-service-field="service_type"><option value="">Select...</option><option>Door</option><option>Opener</option><option>General</option></select></label>' +
+      '<label>Door / opener reference<input data-service-field="asset_reference" placeholder="Door 1, Opener 2..."></label>' +
+      '<label class="span-2">Work performed / issue<input data-service-field="description" placeholder="Replaced spring, adjusted limits..."></label>' +
+      '<label class="span-2">Service notes<textarea data-service-field="notes" rows="2"></textarea></label>' +
+    '</div>';
 
-function collectExtraDoors() {
-  return Array.from(el("extraDoorsContainer").querySelectorAll(".extra-door-card"))
-    .map((card) => {
-      const door = {};
-      extraDoorFields.forEach((name) => {
-        const input = card.querySelector('[data-door-field="' + name + '"]');
-        let value = input.value.trim();
-        if (name === "spring_count") value = value === "" ? null : Number(value);
-        door[name] = value === "" ? null : value;
-      });
-      return door;
-    })
-    .filter((door) => extraDoorFields.some((name) => door[name] !== null && door[name] !== ""));
-}
-
-function openRecordDialog(id) {
-  editingId = id || null;
-  el("recordForm").reset();
-  el("extraDoorsContainer").innerHTML = "";
-
-  if (editingId) {
-    const record = records.find((item) => item.id === editingId);
-    if (!record) return;
-
-    el("dialogTitle").textContent = "Edit installation";
-    fields.forEach((name) => {
-      el(name).value = record[name] ?? "";
-    });
-    renderExtraDoors(record.extraDoors || []);
-  } else {
-    el("dialogTitle").textContent = "Add installation";
+  const serviceData = { ...call };
+  if (!serviceData.service_date && Object.keys(call).length === 0) {
+    serviceData.service_date = new Date().toISOString().slice(0, 10);
   }
-
-  el("recordDialog").showModal();
+  fillAssetCard(card, serviceFields, "service-field", serviceData);
+  card.querySelector(".remove-asset").addEventListener("click", () => {
+    card.remove();
+    renumberEditors("serviceContainer", "Service call");
+  });
+  el("serviceContainer").appendChild(card);
+  renumberEditors("serviceContainer", "Service call");
 }
 
-function closeRecordDialog() {
-  editingId = null;
-  el("recordDialog").close();
+function fillAssetCard(card, fieldNames, dataAttr, data) {
+  fieldNames.forEach((name) => {
+    const input = card.querySelector('[data-' + dataAttr + '="' + name + '"]');
+    if (!input) return;
+    input.value = data[name] ?? "";
+  });
 }
 
-async function saveRecord(event) {
+function renumberEditors(containerId, label) {
+  el(containerId).querySelectorAll(".asset-editor").forEach((card, index) => {
+    const title = card.querySelector(".asset-editor-header strong");
+    if (title) title.textContent = label + " " + (index + 1);
+  });
+}
+
+function collectCards(containerId, fieldNames, dataAttr) {
+  return Array.from(el(containerId).querySelectorAll(".asset-editor"))
+    .map((card) => {
+      const item = {};
+      fieldNames.forEach((name) => {
+        const input = card.querySelector('[data-' + dataAttr + '="' + name + '"]');
+        if (!input) return;
+        let value = String(input.value ?? "").trim();
+        if (name === "spring_count") value = value === "" ? null : Number(value);
+        item[name] = value === "" ? null : value;
+      });
+      return item;
+    })
+    .filter((item) => fieldNames.some((name) => item[name] !== null && item[name] !== ""));
+}
+
+async function saveProperty(event) {
   event.preventDefault();
   if (!currentUser) return;
 
-  const wasEditing = !!editingId;
-  const existing = wasEditing ? records.find((item) => item.id === editingId) : null;
+  const wasEditing = !!editingPropertyId;
+  const existing = wasEditing ? properties.find((item) => item.id === editingPropertyId) : null;
+
   const payload = {
     userId: currentUser.uid,
-    extraDoors: collectExtraDoors()
+    doors: collectCards("doorsContainer", doorFields, "door-field"),
+    openers: collectCards("openersContainer", openerFields, "opener-field"),
+    serviceCalls: collectCards("serviceContainer", serviceFields, "service-field")
   };
 
-  fields.forEach((name) => {
-    let value = el(name).value.trim();
-    if (name === "spring_count") value = value === "" ? null : Number(value);
+  propertyFields.forEach((name) => {
+    const value = el(name).value.trim();
     payload[name] = value === "" ? null : value;
   });
 
   if (!payload.address_line1 || !payload.city || !payload.state) {
-    showToast("Address, city and state are required.", true);
+    showToast("Street address, city and state are required.", true);
     return;
   }
 
-  const button = el("saveBtn");
+  const button = el("savePropertyBtn");
   button.disabled = true;
   button.textContent = "Saving...";
 
@@ -443,48 +550,66 @@ async function saveRecord(event) {
       fullAddress(existing).toLowerCase() !== fullAddress(payload).toLowerCase();
 
     if (addressChanged || existing?.latitude == null || existing?.longitude == null) {
-      const coords = await geocodeRecord(payload);
+      const coords = await geocodeProperty(payload);
       payload.latitude = coords?.lat ?? null;
       payload.longitude = coords?.lng ?? null;
+      payload.geocodeSource = coords?.source ?? null;
     } else {
       payload.latitude = existing.latitude;
       payload.longitude = existing.longitude;
+      payload.geocodeSource = existing.geocodeSource ?? null;
     }
+
+    // Clear the old one-door fields now that this document is a property record.
+    Object.assign(payload, {
+      manufacturer: null,
+      model_number: null,
+      door_size: null,
+      spring_size: null,
+      spring_count: null,
+      door_type: null,
+      color: null,
+      lift_type: null,
+      install_date: null,
+      notes: null
+    });
 
     if (wasEditing) {
       payload.updatedAt = serverTimestamp();
-      await updateDoc(doc(db, "installations", editingId), payload);
+      await updateDoc(doc(db, "installations", editingPropertyId), payload);
     } else {
       payload.createdAt = serverTimestamp();
       payload.updatedAt = serverTimestamp();
       await addDoc(collection(db, "installations"), payload);
     }
 
-    closeRecordDialog();
-    showToast(wasEditing ? "Installation updated." : "Installation saved.");
-    await loadRecords();
+    closePropertyDialog();
+    showToast(wasEditing ? "Property updated." : "Property saved.");
+    await loadProperties();
   } catch (error) {
     console.error("Save failed:", error);
-    showToast("Could not save installation: " + friendlyError(error), true);
+    showToast("Could not save property: " + friendlyError(error), true);
   } finally {
     button.disabled = false;
-    button.textContent = "Save installation";
+    button.textContent = "Save property";
   }
 }
 
-async function deleteRecord(id) {
-  const record = records.find((item) => item.id === id);
-  if (!record) return;
+async function deleteProperty(id) {
+  const property = properties.find((item) => item.id === id);
+  if (!property) return;
 
-  const ok = window.confirm("Delete this installation?\n\n" + fullAddress(record));
+  const ok = window.confirm(
+    "Delete this entire property and its door, opener, and service history?\n\n" + fullAddress(property)
+  );
   if (!ok) return;
 
   try {
     await deleteDoc(doc(db, "installations", id));
-    showToast("Installation deleted.");
-    await loadRecords();
+    showToast("Property deleted.");
+    await loadProperties();
   } catch (error) {
-    showToast("Could not delete installation: " + friendlyError(error), true);
+    showToast("Could not delete property: " + friendlyError(error), true);
   }
 }
 
@@ -518,13 +643,11 @@ function parseStreet(value) {
 }
 
 function resultRoad(address = {}) {
-  return address.road || address.residential || address.pedestrian ||
-    address.highway || address.path || address.place || "";
+  return address.road || address.residential || address.pedestrian || address.highway || address.path || address.place || "";
 }
 
 function resultLocality(address = {}) {
-  return address.city || address.town || address.village ||
-    address.hamlet || address.municipality || address.county || "";
+  return address.city || address.town || address.village || address.hamlet || address.municipality || address.county || "";
 }
 
 function roadCore(value) {
@@ -532,9 +655,9 @@ function roadCore(value) {
   return normalizeGeoText(value).split(" ").filter((token) => token && !stop.has(token)).join(" ");
 }
 
-function isConfidentStreetMatch(result, record) {
+function isConfidentStreetMatch(result, property) {
   const address = result.address || {};
-  const inputStreet = parseStreet(record.address_line1);
+  const inputStreet = parseStreet(property.address_line1);
   const inputRoad = roadCore(inputStreet.road);
   const matchedRoad = roadCore(resultRoad(address));
   const resultHouse = normalizeGeoText(address.house_number || "");
@@ -549,12 +672,12 @@ function isConfidentStreetMatch(result, record) {
     if (!display.includes(inputRoad)) return false;
   }
 
-  const city = normalizeGeoText(normalizeCity(record.city, record.state));
+  const city = normalizeGeoText(normalizeCity(property.city, property.state));
   const locality = normalizeGeoText(resultLocality(address));
   const display = normalizeGeoText(result.display_name || "");
   if (city && locality && city !== locality && !display.includes(city)) return false;
 
-  const inputZip = String(record.postal_code || "").trim().slice(0, 5);
+  const inputZip = String(property.postal_code || "").trim().slice(0, 5);
   const resultZip = String(address.postcode || "").trim().slice(0, 5);
   if (inputZip && resultZip && inputZip !== resultZip) return false;
 
@@ -597,31 +720,20 @@ function censusJsonp(url, timeoutMs = 12000) {
   });
 }
 
-async function censusGeocode(record) {
-  try {
-    const address = fullAddress(record);
-    if (!address) return null;
+async function censusGeocode(property) {
+  const address = fullAddress(property);
+  if (!address) return null;
 
-    const params = new URLSearchParams({
-      address,
-      benchmark: "Public_AR_Current"
-    });
+  const params = new URLSearchParams({ address, benchmark: "Public_AR_Current" });
+  const data = await censusJsonp(
+    "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?" + params.toString()
+  );
 
-    const data = await censusJsonp(
-      "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?" + params.toString()
-    );
-
-    const match = data?.result?.addressMatches?.[0];
-    const x = Number(match?.coordinates?.x);
-    const y = Number(match?.coordinates?.y);
-
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-
-    return { lat: y, lng: x, source: "Census" };
-  } catch (error) {
-    console.warn("Census geocoder failed:", error);
-    return null;
-  }
+  const match = data?.result?.addressMatches?.[0];
+  const lng = Number(match?.coordinates?.x);
+  const lat = Number(match?.coordinates?.y);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { lat, lng, source: "Census" };
 }
 
 async function nominatimSearch(url) {
@@ -637,11 +749,11 @@ async function nominatimSearch(url) {
   }
 }
 
-async function nominatimGeocode(record) {
-  const street = parseStreet(record.address_line1).full;
-  const city = normalizeCity(record.city, record.state);
-  const state = String(record.state || "").trim();
-  const zip = String(record.postal_code || "").trim();
+async function nominatimGeocode(property) {
+  const street = parseStreet(property.address_line1).full;
+  const city = normalizeCity(property.city, property.state);
+  const state = String(property.state || "").trim();
+  const zip = String(property.postal_code || "").trim();
 
   const structured = new URLSearchParams({
     format: "jsonv2",
@@ -657,85 +769,70 @@ async function nominatimGeocode(record) {
   let results = await nominatimSearch(
     "https://nominatim.openstreetmap.org/search?" + structured.toString()
   );
-
-  let match = results.find((result) => isConfidentStreetMatch(result, record));
+  let match = results.find((result) => isConfidentStreetMatch(result, property));
 
   if (!match) {
-    const full = [street, city, state, zip].filter(Boolean).join(", ");
-    const freeform = new URLSearchParams({
+    const params = new URLSearchParams({
       format: "jsonv2",
       limit: "5",
       addressdetails: "1",
       countrycodes: "us",
-      q: full
+      q: fullAddress(property)
     });
-
-    results = await nominatimSearch(
-      "https://nominatim.openstreetmap.org/search?" + freeform.toString()
-    );
-    match = results.find((result) => isConfidentStreetMatch(result, record));
+    results = await nominatimSearch("https://nominatim.openstreetmap.org/search?" + params.toString());
+    match = results.find((result) => isConfidentStreetMatch(result, property));
   }
 
   if (!match) return null;
   return { lat: Number(match.lat), lng: Number(match.lon), source: "OpenStreetMap" };
 }
 
-async function geocodeRecord(record) {
-  // The U.S. Census geocoder handles many street addresses that OpenStreetMap
-  // does not contain, especially rural addresses. Use it first, then fall back
-  // to a strict OpenStreetMap street/house-number match.
-  const census = await censusGeocode(record);
+async function geocodeProperty(property) {
+  const census = await censusGeocode(property);
   if (census) return census;
-
-  return await nominatimGeocode(record);
+  return await nominatimGeocode(property);
 }
 
 async function backfillMissingCoordinates() {
   if (!currentUser) return;
-
-  const missing = records.filter((record) =>
-    (record.latitude == null || record.longitude == null) &&
-    !geocodeAttempted.has(record.id)
+  const missing = properties.filter((property) =>
+    (property.latitude == null || property.longitude == null) &&
+    !geocodeAttempted.has(property.id)
   );
-
   if (!missing.length) return;
 
-  showToast("Locating " + missing.length + " installation" + (missing.length === 1 ? "" : "s") + " for the map...");
+  showToast("Locating " + missing.length + " propert" + (missing.length === 1 ? "y" : "ies") + " for the map...");
 
-  for (const record of missing) {
-    geocodeAttempted.add(record.id);
-
-    const coords = await geocodeRecord(record);
+  for (const property of missing) {
+    geocodeAttempted.add(property.id);
+    const coords = await geocodeProperty(property);
     if (coords) {
       try {
-        await updateDoc(doc(db, "installations", record.id), {
+        await updateDoc(doc(db, "installations", property.id), {
           latitude: coords.lat,
           longitude: coords.lng,
           geocodeSource: coords.source || null,
           updatedAt: serverTimestamp()
         });
-
-        record.latitude = coords.lat;
-        record.longitude = coords.lng;
-        record.geocodeSource = coords.source || null;
+        property.latitude = coords.lat;
+        property.longitude = coords.lng;
+        property.geocodeSource = coords.source || null;
         renderMapMarkers();
       } catch (error) {
         console.warn("Could not save map coordinates:", error);
       }
     }
-
-    // Avoid hammering free public geocoding services.
     await new Promise((resolve) => setTimeout(resolve, 800));
   }
 
-  const stillMissing = records.filter((record) =>
-    record.latitude == null || record.longitude == null
+  const stillMissing = properties.filter((property) =>
+    property.latitude == null || property.longitude == null
   ).length;
 
   if (stillMissing) {
     showToast(
-      stillMissing + " address" + (stillMissing === 1 ? "" : "es") +
-      " could not be pinned automatically. Tap Map on that record to open the address.",
+      stillMissing + " propert" + (stillMissing === 1 ? "y" : "ies") +
+      " still need a manual pin. Use Set pin on the property.",
       true
     );
   } else {
@@ -744,120 +841,15 @@ async function backfillMissingCoordinates() {
 }
 
 async function retryMapPins() {
-  if (!currentUser) return;
   geocodeAttempted.clear();
-
   const button = el("retryPinsBtn");
   button.disabled = true;
   button.textContent = "Locating...";
-
   try {
     await backfillMissingCoordinates();
   } finally {
     button.disabled = false;
     button.textContent = "Retry missing pins";
-  }
-}
-
-function closePinPicker() {
-  pinPickerRecordId = null;
-  pinPickerMarker = null;
-  el("pinDialog").close();
-}
-
-function setPinPickerMarker(lat, lng) {
-  if (!pinPickerMap) return;
-
-  if (pinPickerMarker) {
-    pinPickerMarker.setLatLng([lat, lng]);
-  } else {
-    pinPickerMarker = L.marker([lat, lng], { draggable: true }).addTo(pinPickerMap);
-    pinPickerMarker.on("dragend", () => {
-      const point = pinPickerMarker.getLatLng();
-      el("pinCoordinates").textContent = point.lat.toFixed(6) + ", " + point.lng.toFixed(6);
-    });
-  }
-
-  el("pinCoordinates").textContent = Number(lat).toFixed(6) + ", " + Number(lng).toFixed(6);
-}
-
-function openPinPicker(id) {
-  const record = records.find((item) => item.id === id);
-  if (!record) return;
-
-  pinPickerRecordId = id;
-  pinPickerMarker = null;
-  el("pinDialogTitle").textContent = "Set map pin";
-  el("pinAddress").textContent = fullAddress(record);
-  el("pinCoordinates").textContent = "Click the exact installation location on the map.";
-  el("pinDialog").showModal();
-
-  setTimeout(() => {
-    if (!pinPickerMap) {
-      pinPickerMap = L.map("pinPickerMap").setView([37.8, -96], 4);
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19,
-        attribution: '&copy; OpenStreetMap contributors'
-      }).addTo(pinPickerMap);
-
-      pinPickerMap.on("click", (event) => {
-        setPinPickerMarker(event.latlng.lat, event.latlng.lng);
-      });
-    }
-
-    pinPickerMap.invalidateSize();
-
-    if (record.latitude != null && record.longitude != null) {
-      setPinPickerMarker(Number(record.latitude), Number(record.longitude));
-      pinPickerMap.setView([record.latitude, record.longitude], 17);
-    } else {
-      pinPickerMap.setView([37.8, -96], 4);
-
-      // Make one best-effort automatic lookup to get the map near the address.
-      void geocodeRecord(record).then((coords) => {
-        if (!coords || pinPickerRecordId !== id) return;
-        setPinPickerMarker(coords.lat, coords.lng);
-        pinPickerMap.setView([coords.lat, coords.lng], 17);
-      });
-    }
-  }, 100);
-}
-
-async function savePinPicker() {
-  if (!currentUser || !pinPickerRecordId || !pinPickerMarker) {
-    showToast("Click the installation location on the map first.", true);
-    return;
-  }
-
-  const point = pinPickerMarker.getLatLng();
-  const button = el("savePinBtn");
-  button.disabled = true;
-  button.textContent = "Saving...";
-
-  try {
-    await updateDoc(doc(db, "installations", pinPickerRecordId), {
-      latitude: point.lat,
-      longitude: point.lng,
-      geocodeSource: "Manual",
-      updatedAt: serverTimestamp()
-    });
-
-    const record = records.find((item) => item.id === pinPickerRecordId);
-    if (record) {
-      record.latitude = point.lat;
-      record.longitude = point.lng;
-      record.geocodeSource = "Manual";
-    }
-
-    renderRecords();
-    renderMapMarkers();
-    closePinPicker();
-    showToast("Map pin saved.");
-  } catch (error) {
-    showToast("Could not save map pin: " + friendlyError(error), true);
-  } finally {
-    button.disabled = false;
-    button.textContent = "Save pin";
   }
 }
 
@@ -889,11 +881,11 @@ function ensureMap() {
 
 function renderMapMarkers() {
   if (!map || !markerLayer) return;
-
   markerLayer.clearLayers();
-  getFilteredRecords()
-    .filter((record) => record.latitude != null && record.longitude != null)
-    .forEach((record) => {
+
+  getFilteredProperties()
+    .filter((property) => property.latitude != null && property.longitude != null)
+    .forEach((property) => {
       const pinIcon = L.divIcon({
         className: "installation-pin-icon",
         html: '<div class="installation-pin-dot"><span></span></div>',
@@ -902,21 +894,22 @@ function renderMapMarkers() {
         tooltipAnchor: [0, -36]
       });
 
-      const marker = L.marker([record.latitude, record.longitude], {
+      const marker = L.marker([property.latitude, property.longitude], {
         icon: pinIcon,
-        title: fullAddress(record)
+        title: fullAddress(property)
       }).addTo(markerLayer);
 
       marker.bindTooltip(
-        "<strong>" + esc(fullAddress(record)) + "</strong><br>" +
-        esc(joinParts(record.manufacturer, record.model_number) || "Garage door") +
-        (record.door_size ? "<br>" + esc(record.door_size) : "") +
-        "<br><em>Click to open record</em>",
+        "<strong>" + esc(property.customer_name || fullAddress(property)) + "</strong><br>" +
+        esc(fullAddress(property)) + "<br>" +
+        (property.doors || []).length + " door(s) • " +
+        (property.openers || []).length + " opener(s) • " +
+        (property.serviceCalls || []).length + " service call(s)",
         { direction: "top", offset: [0, -8] }
       );
 
-      marker.on("click", () => openRecordDialog(record.id));
-      marker.options.recordId = record.id;
+      marker.on("click", () => openPropertyDialog(property.id));
+      marker.options.propertyId = property.id;
     });
 
   fitMap();
@@ -925,21 +918,19 @@ function renderMapMarkers() {
 function fitMap() {
   if (!map || !markerLayer) return;
   const layers = markerLayer.getLayers();
-
   if (!layers.length) {
     map.setView([37.8, -96], 4);
     return;
   }
-
   if (layers.length === 1) map.setView(layers[0].getLatLng(), 14);
   else map.fitBounds(L.featureGroup(layers).getBounds().pad(0.15));
 }
 
-function focusRecordOnMap(id) {
-  const record = records.find((item) => item.id === id);
-  if (!record) return;
+function focusPropertyOnMap(id) {
+  const property = properties.find((item) => item.id === id);
+  if (!property) return;
 
-  if (record.latitude == null || record.longitude == null) {
+  if (property.latitude == null || property.longitude == null) {
     openPinPicker(id);
     return;
   }
@@ -949,28 +940,123 @@ function focusRecordOnMap(id) {
 
   setTimeout(() => {
     map.invalidateSize();
-    map.setView([record.latitude, record.longitude], 16);
-    const marker = markerLayer.getLayers().find((layer) => layer.options.recordId === id);
+    map.setView([property.latitude, property.longitude], 16);
+    const marker = markerLayer.getLayers().find((layer) => layer.options.propertyId === id);
     if (marker) marker.openTooltip();
   }, 150);
 }
 
+function closePinPicker() {
+  pinPickerPropertyId = null;
+  pinPickerMarker = null;
+  el("pinDialog").close();
+}
+
+function setPinPickerMarker(lat, lng) {
+  if (!pinPickerMap) return;
+
+  if (pinPickerMarker) {
+    pinPickerMarker.setLatLng([lat, lng]);
+  } else {
+    pinPickerMarker = L.marker([lat, lng], { draggable: true }).addTo(pinPickerMap);
+    pinPickerMarker.on("dragend", () => {
+      const point = pinPickerMarker.getLatLng();
+      el("pinCoordinates").textContent = point.lat.toFixed(6) + ", " + point.lng.toFixed(6);
+    });
+  }
+
+  el("pinCoordinates").textContent = Number(lat).toFixed(6) + ", " + Number(lng).toFixed(6);
+}
+
+function openPinPicker(id) {
+  const property = properties.find((item) => item.id === id);
+  if (!property) return;
+
+  pinPickerPropertyId = id;
+  pinPickerMarker = null;
+  el("pinAddress").textContent = fullAddress(property);
+  el("pinCoordinates").textContent = "Click the exact property location on the map.";
+  el("pinDialog").showModal();
+
+  setTimeout(() => {
+    if (!pinPickerMap) {
+      pinPickerMap = L.map("pinPickerMap").setView([37.8, -96], 4);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap contributors'
+      }).addTo(pinPickerMap);
+      pinPickerMap.on("click", (event) => {
+        setPinPickerMarker(event.latlng.lat, event.latlng.lng);
+      });
+    }
+
+    pinPickerMap.invalidateSize();
+
+    if (property.latitude != null && property.longitude != null) {
+      setPinPickerMarker(Number(property.latitude), Number(property.longitude));
+      pinPickerMap.setView([property.latitude, property.longitude], 17);
+    } else {
+      pinPickerMap.setView([37.8, -96], 4);
+      void geocodeProperty(property).then((coords) => {
+        if (!coords || pinPickerPropertyId !== id) return;
+        setPinPickerMarker(coords.lat, coords.lng);
+        pinPickerMap.setView([coords.lat, coords.lng], 17);
+      });
+    }
+  }, 100);
+}
+
+async function savePinPicker() {
+  if (!currentUser || !pinPickerPropertyId || !pinPickerMarker) {
+    showToast("Click the property location on the map first.", true);
+    return;
+  }
+
+  const point = pinPickerMarker.getLatLng();
+  const button = el("savePinBtn");
+  button.disabled = true;
+  button.textContent = "Saving...";
+
+  try {
+    await updateDoc(doc(db, "installations", pinPickerPropertyId), {
+      latitude: point.lat,
+      longitude: point.lng,
+      geocodeSource: "Manual",
+      updatedAt: serverTimestamp()
+    });
+
+    const property = properties.find((item) => item.id === pinPickerPropertyId);
+    if (property) {
+      property.latitude = point.lat;
+      property.longitude = point.lng;
+      property.geocodeSource = "Manual";
+    }
+
+    renderProperties();
+    renderMapMarkers();
+    closePinPicker();
+    showToast("Map pin saved.");
+  } catch (error) {
+    showToast("Could not save map pin: " + friendlyError(error), true);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Save pin";
+  }
+}
+
 function exportCsv() {
-  if (!records.length) {
+  if (!properties.length) {
     showToast("Nothing to export.", true);
     return;
   }
 
-  const columns = [
-    "customer_name","address_line1","city","state","postal_code","manufacturer",
-    "model_number","door_size","spring_size","spring_count","door_type","color",
-    "lift_type","install_date","extraDoors","notes"
-  ];
-
+  const columns = ["customer_name","address_line1","city","state","postal_code","doors","openers","serviceCalls","property_notes"];
   const rows = [columns].concat(
-    records.map((record) => columns.map((column) => {
-      if (column === "extraDoors") return JSON.stringify(record.extraDoors || []);
-      return record[column] ?? "";
+    properties.map((property) => columns.map((column) => {
+      if (column === "doors") return JSON.stringify(property.doors || []);
+      if (column === "openers") return JSON.stringify(property.openers || []);
+      if (column === "serviceCalls") return JSON.stringify(property.serviceCalls || []);
+      return property[column] ?? "";
     }))
   );
 
@@ -979,7 +1065,7 @@ function exportCsv() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "garage-door-installations-" + new Date().toISOString().slice(0, 10) + ".csv";
+  a.download = "property-tracker-" + new Date().toISOString().slice(0, 10) + ".csv";
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -991,23 +1077,21 @@ function csvValue(value) {
 function normalizeCity(city, state) {
   let value = String(city || "").trim();
   const stateValue = String(state || "").trim();
-
   if (!value || !stateValue) return value;
+
   const lowerValue = value.toLowerCase();
   const lowerState = stateValue.toLowerCase();
-
   if (lowerValue.endsWith(", " + lowerState)) {
     value = value.slice(0, -(stateValue.length + 2)).trim();
   } else if (lowerValue.endsWith(" " + lowerState)) {
     value = value.slice(0, -(stateValue.length + 1)).trim();
   }
-
   return value.replace(/,\s*$/, "").trim();
 }
 
-function fullAddress(record) {
-  const city = normalizeCity(record.city, record.state);
-  return [record.address_line1, city, record.state, record.postal_code]
+function fullAddress(property) {
+  const city = normalizeCity(property.city, property.state);
+  return [property.address_line1, city, property.state, property.postal_code]
     .map((value) => String(value || "").trim())
     .filter(Boolean)
     .join(", ");
@@ -1046,5 +1130,5 @@ function showToast(message, isError = false) {
   el("toast").textContent = message;
   el("toast").classList.toggle("error", !!isError);
   el("toast").classList.remove("hidden");
-  toastTimer = setTimeout(() => el("toast").classList.add("hidden"), 4500);
+  toastTimer = setTimeout(() => el("toast").classList.add("hidden"), 5000);
 }
