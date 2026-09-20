@@ -12,7 +12,7 @@
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
-  <link rel="stylesheet" href="./styles.css?v=1">
+  <link rel="stylesheet" href="./styles.css?v=2">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 </head>
 <body>
@@ -20,7 +20,7 @@
     <div>
       <div class="eyebrow">INSTALLATION DATABASE</div>
       <h1>Garage Door Install Tracker</h1>
-      <div id="appVersion" class="muted" style="font-size:.72rem;margin-top:2px;">Firebase v1.1 · map fix</div>
+      <div id="appVersion" class="muted" style="font-size:.72rem;margin-top:2px;">Firebase v1.2 · reliable pins</div>
     </div>
     <div id="userArea" class="user-area hidden">
       <span id="userEmail"></span>
@@ -74,8 +74,9 @@
         <div class="panel-heading">
           <div>
             <h2>Installation Map</h2>
-            <p class="muted">Only verified street-level matches are pinned. Click a pin to open that installation.</p>
+            <p class="muted">Pins are created automatically when possible. If an address cannot be matched, use Set pin on that record.</p>
           </div>
+          <button id="retryPinsBtn" class="button secondary small" type="button">Retry missing pins</button>
         </div>
         <div id="map"></div>
       </section>
@@ -193,7 +194,28 @@
     </form>
   </dialog>
 
+  <dialog id="pinDialog">
+    <div class="pin-dialog-content">
+      <div class="dialog-header">
+        <div>
+          <div class="eyebrow">MAP LOCATION</div>
+          <h2 id="pinDialogTitle">Set map pin</h2>
+          <p id="pinAddress" class="muted"></p>
+        </div>
+        <button id="closePinDialogBtn" class="icon-button" type="button" aria-label="Close">×</button>
+      </div>
+      <p class="muted">Click the exact installation location. You can also drag the marker after placing it.</p>
+      <div id="pinPickerMap" class="pin-picker-map"></div>
+      <p id="pinCoordinates" class="status-text">Click the exact installation location on the map.</p>
+      <div class="dialog-actions">
+        <button id="openAddressBtn" class="button secondary" type="button">Open address in Google Maps</button>
+        <button id="cancelPinBtn" class="button secondary" type="button">Cancel</button>
+        <button id="savePinBtn" class="button primary" type="button">Save pin</button>
+      </div>
+    </div>
+  </dialog>
+
   <div id="toast" class="toast hidden" role="status"></div>
-  <script type="module" src="./app.js?v=2"></script>
+  <script type="module" src="./app.js?v=3"></script>
 </body>
 </html>
