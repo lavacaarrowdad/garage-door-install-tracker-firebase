@@ -41,6 +41,10 @@ let markerLayer = null;
 let pinPickerMap = null;
 let pinPickerMarker = null;
 let pinPickerPropertyId = null;
+let activePhotoPropertyId = null;
+let activePhotoDoorId = null;
+let activePhotoDoorLabel = "";
+let activePhotos = [];
 const geocodeAttempted = new Set();
 
 const el = (id) => document.getElementById(id);
@@ -48,6 +52,11 @@ const propertyFields = ["customer_name", "address_line1", "city", "state", "post
 const doorFields = ["manufacturer", "model_number", "door_size", "spring_size", "spring_count", "door_type", "color", "lift_type", "install_date", "notes"];
 const openerFields = ["manufacturer", "model_number", "serial_number", "opener_type", "horsepower", "install_date", "notes"];
 const serviceFields = ["service_date", "service_type", "asset_reference", "description", "notes"];
+
+function newId(prefix = "item") {
+  if (globalThis.crypto?.randomUUID) return prefix + "-" + crypto.randomUUID();
+  return prefix + "-" + Date.now() + "-" + Math.random().toString(36).slice(2, 10);
+}
 
 document.addEventListener("DOMContentLoaded", init);
 
@@ -179,7 +188,9 @@ function setAuthMessage(message, isError = false) {
 }
 
 function normalizeProperty(raw) {
-  const doors = Array.isArray(raw.doors) ? raw.doors.map((door) => ({ ...door })) : [];
+  const doors = Array.isArray(raw.doors)
+    ? raw.doors.map((door) => ({ ...door, id: door.id || newId("door") }))
+    : [];
   const hasLegacyDoor = [
     raw.manufacturer, raw.model_number, raw.door_size, raw.spring_size,
     raw.spring_count, raw.door_type, raw.color, raw.lift_type, raw.install_date
@@ -189,6 +200,7 @@ function normalizeProperty(raw) {
   if (!doors.length) {
     if (hasLegacyDoor) {
       doors.push({
+        id: newId("door"),
         manufacturer: raw.manufacturer ?? null,
         model_number: raw.model_number ?? null,
         door_size: raw.door_size ?? null,
@@ -203,7 +215,7 @@ function normalizeProperty(raw) {
     }
 
     if (Array.isArray(raw.extraDoors)) {
-      raw.extraDoors.forEach((door) => doors.push({ ...door }));
+      raw.extraDoors.forEach((door) => doors.push({ ...door, id: door.id || newId("door") }));
     }
 
     if (hasLegacyDoor || (Array.isArray(raw.extraDoors) && raw.extraDoors.length)) {
@@ -219,21 +231,66 @@ function normalizeProperty(raw) {
       ? raw.serviceCalls.map((item) => ({ ...item }))
       : (Array.isArray(raw.service_calls) ? raw.service_calls.map((item) => ({ ...item })) : []),
     property_notes: raw.property_notes ?? raw.notes ?? null,
-    _needsMigration: needsMigration
+    _needsMigration: needsMigration || raw.recordType !== "property"
   };
+}
+
+async function ensurePropertyRecordTypes() {
+  if (!currentUser) return;
+
+  const migrationKey = "propertyTrackerRecordTypesV2:" + currentUser.uid;
+  if (localStorage.getItem(migrationKey) === "done") return;
+
+  try {
+    const broad = query(
+      collection(db, "installations"),
+      where("userId", "==", currentUser.uid)
+    );
+    const snapshot = await getDocs(broad);
+
+    for (const snap of snapshot.docs) {
+      const data = snap.data();
+      if (!data.recordType) {
+        await updateDoc(doc(db, "installations", snap.id), {
+          recordType: "property",
+          updatedAt: serverTimestamp()
+        });
+      }
+    }
+
+    localStorage.setItem(migrationKey, "done");
+  } catch (error) {
+    console.warn("Record type migration could not complete:", error);
+  }
 }
 
 async function loadProperties() {
   if (!currentUser) return;
 
   try {
-    const q = query(
-      collection(db, "installations"),
-      where("userId", "==", currentUser.uid)
-    );
+    await ensurePropertyRecordTypes();
 
-    const snapshot = await getDocs(q);
-    properties = snapshot.docs.map((snap) => normalizeProperty({ id: snap.id, ...snap.data() }));
+    let snapshot;
+    try {
+      const propertyQuery = query(
+        collection(db, "installations"),
+        where("userId", "==", currentUser.uid),
+        where("recordType", "==", "property")
+      );
+      snapshot = await getDocs(propertyQuery);
+    } catch (error) {
+      console.warn("Property-only query fell back to legacy query:", error);
+      const broad = query(
+        collection(db, "installations"),
+        where("userId", "==", currentUser.uid)
+      );
+      snapshot = await getDocs(broad);
+    }
+
+    properties = snapshot.docs
+      .map((snap) => ({ id: snap.id, ...snap.data() }))
+      .filter((raw) => raw.recordType !== "photo")
+      .map((raw) => normalizeProperty(raw));
 
     properties.sort((a, b) => {
       const customerCompare = String(a.customer_name || "").localeCompare(String(b.customer_name || ""));
@@ -257,6 +314,7 @@ async function migrateLegacyProperties() {
   for (const property of legacy) {
     try {
       await updateDoc(doc(db, "installations", property.id), {
+        recordType: "property",
         doors: property.doors,
         property_notes: property.property_notes ?? null,
         updatedAt: serverTimestamp()
@@ -537,6 +595,7 @@ async function saveProperty(event) {
 
   const payload = {
     userId: currentUser.uid,
+    recordType: "property",
     doors: collectCards("doorsContainer", doorFields, "door-field"),
     openers: collectCards("openersContainer", openerFields, "opener-field"),
     serviceCalls: collectCards("serviceContainer", serviceFields, "service-field")
