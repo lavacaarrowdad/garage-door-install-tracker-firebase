@@ -419,6 +419,7 @@ function closePropertyDialog() {
 }
 
 function addDoorCard(door = {}) {
+  if (Object.keys(door).length === 0) door = { install_date: "" };
   const card = document.createElement("div");
   card.className = "asset-editor";
   card.innerHTML =
@@ -446,6 +447,7 @@ function addDoorCard(door = {}) {
 }
 
 function addOpenerCard(opener = {}) {
+  if (Object.keys(opener).length === 0) opener = { install_date: "" };
   const card = document.createElement("div");
   card.className = "asset-editor";
   card.innerHTML =
