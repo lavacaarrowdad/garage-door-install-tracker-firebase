@@ -129,6 +129,13 @@ function bindEvents() {
   el("propertyDialog").addEventListener("click", (event) => {
     if (event.target === el("propertyDialog")) closePropertyDialog();
   });
+
+  el("closePhotoDialogBtn").addEventListener("click", closePhotoDialog);
+  el("closePhotosBtn").addEventListener("click", closePhotoDialog);
+  el("photoInput").addEventListener("change", uploadSelectedPhotos);
+  el("photoDialog").addEventListener("click", (event) => {
+    if (event.target === el("photoDialog")) closePhotoDialog();
+  });
 }
 
 async function syncAuthView() {
@@ -478,10 +485,22 @@ function closePropertyDialog() {
 
 function addDoorCard(door = {}) {
   if (Object.keys(door).length === 0) door = { install_date: "" };
+
+  const doorId = door.id || newId("door");
+  const wasAlreadySaved = !!door.id && !!editingPropertyId;
+
   const card = document.createElement("div");
   card.className = "asset-editor";
+  card.dataset.itemId = doorId;
+  card.dataset.savedDoor = wasAlreadySaved ? "1" : "0";
   card.innerHTML =
-    '<div class="asset-editor-header"><strong>Door</strong><button class="button danger small remove-asset" type="button">Remove</button></div>' +
+    '<div class="asset-editor-header">' +
+      '<strong>Door</strong>' +
+      '<div class="asset-header-actions">' +
+        '<button class="button secondary small door-photos" type="button">Photos</button>' +
+        '<button class="button danger small remove-asset" type="button">Remove</button>' +
+      '</div>' +
+    '</div>' +
     '<div class="extra-door-grid">' +
       '<label>Manufacturer<input data-door-field="manufacturer" placeholder="Clopay, Wayne Dalton..."></label>' +
       '<label>Model #<input data-door-field="model_number"></label>' +
@@ -496,10 +515,26 @@ function addDoorCard(door = {}) {
     '</div>';
 
   fillAssetCard(card, doorFields, "door-field", door);
+
+  const photoButton = card.querySelector(".door-photos");
+  if (!wasAlreadySaved) {
+    photoButton.disabled = true;
+    photoButton.title = editingPropertyId
+      ? "Save the property first, then reopen it to add photos to this new door."
+      : "Save the property first, then add photos.";
+  } else {
+    photoButton.addEventListener("click", () => {
+      const cards = Array.from(el("doorsContainer").querySelectorAll(".asset-editor"));
+      const doorNumber = cards.indexOf(card) + 1;
+      openDoorPhotos(editingPropertyId, doorId, "Door " + doorNumber);
+    });
+  }
+
   card.querySelector(".remove-asset").addEventListener("click", () => {
     card.remove();
     renumberEditors("doorsContainer", "Door");
   });
+
   el("doorsContainer").appendChild(card);
   renumberEditors("doorsContainer", "Door");
 }
@@ -574,6 +609,7 @@ function collectCards(containerId, fieldNames, dataAttr) {
   return Array.from(el(containerId).querySelectorAll(".asset-editor"))
     .map((card) => {
       const item = {};
+      if (card.dataset.itemId) item.id = card.dataset.itemId;
       fieldNames.forEach((name) => {
         const input = card.querySelector('[data-' + dataAttr + '="' + name + '"]');
         if (!input) return;
