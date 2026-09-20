@@ -666,3 +666,97 @@ select:focus {
     min-height: 42px;
   }
 }
+
+
+#propertyForm {
+  padding: 20px;
+}
+.asset-editor-header > div,
+.asset-editor-header .asset-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.asset-header-actions {
+  margin-left: auto;
+}
+.photo-dialog-content {
+  padding: 20px;
+}
+.photo-upload-label {
+  display: block;
+  border: 1px dashed #3a526f;
+  background: #0a1626;
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 8px;
+}
+.photo-upload-label input[type="file"] {
+  margin-top: 9px;
+  padding: 8px;
+  background: #07111f;
+}
+.photo-help {
+  font-size: .82rem;
+  line-height: 1.4;
+}
+.photo-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.photo-card {
+  border: 1px solid #344761;
+  background: #0a1626;
+  border-radius: 12px;
+  overflow: hidden;
+}
+.photo-card img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  display: block;
+  background: #07111f;
+}
+.photo-card-footer {
+  padding: 8px;
+  display: grid;
+  gap: 7px;
+}
+.photo-card-name {
+  color: var(--muted);
+  font-size: .72rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.photo-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  color: var(--muted);
+  border: 1px dashed #344761;
+  border-radius: 12px;
+  padding: 24px 14px;
+}
+@media (max-width: 720px) {
+  #propertyForm,
+  .photo-dialog-content {
+    padding: 13px;
+  }
+  .photo-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .asset-editor-header {
+    align-items: flex-start;
+  }
+  .asset-header-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+}
+@media (max-width: 390px) {
+  .photo-grid {
+    grid-template-columns: 1fr;
+  }
+}
