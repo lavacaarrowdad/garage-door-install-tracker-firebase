@@ -38,6 +38,9 @@ let records = [];
 let editingId = null;
 let map = null;
 let markerLayer = null;
+let pinPickerMap = null;
+let pinPickerMarker = null;
+let pinPickerRecordId = null;
 const geocodeAttempted = new Set();
 
 const el = (id) => document.getElementById(id);
@@ -100,7 +103,20 @@ function bindEvents() {
   });
 
   el("mapToggleBtn").addEventListener("click", toggleMap);
+  el("retryPinsBtn").addEventListener("click", retryMapPins);
   el("exportBtn").addEventListener("click", exportCsv);
+  el("closePinDialogBtn").addEventListener("click", closePinPicker);
+  el("cancelPinBtn").addEventListener("click", closePinPicker);
+  el("savePinBtn").addEventListener("click", savePinPicker);
+  el("openAddressBtn").addEventListener("click", () => {
+    const record = records.find((item) => item.id === pinPickerRecordId);
+    if (!record) return;
+    window.open(
+      "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(fullAddress(record)),
+      "_blank",
+      "noopener"
+    );
+  });
   el("recordForm").addEventListener("submit", saveRecord);
   el("closeDialogBtn").addEventListener("click", closeRecordDialog);
   el("cancelBtn").addEventListener("click", closeRecordDialog);
@@ -287,7 +303,9 @@ function recordCardHtml(record) {
     (record.notes ? '<p class="muted">' + esc(record.notes) + '</p>' : '') +
     '<div class="record-actions">' +
       '<button class="button secondary small" data-edit="' + esc(record.id) + '">Edit</button>' +
-      '<button class="button secondary small" data-map="' + esc(record.id) + '">Map</button>' +
+      '<button class="button secondary small" data-map="' + esc(record.id) + '">' +
+        (record.latitude != null && record.longitude != null ? "Map" : "Set pin") +
+      '</button>' +
       '<button class="button danger small" data-delete="' + esc(record.id) + '">Delete</button>' +
     '</div>' +
   '</article>';
@@ -544,6 +562,42 @@ function isConfidentStreetMatch(result, record) {
   return Number.isFinite(Number(result.lat)) && Number.isFinite(Number(result.lon));
 }
 
+function censusJsonp(url, timeoutMs = 12000) {
+  return new Promise((resolve) => {
+    const callbackName = "__censusGeocode_" + Date.now() + "_" + Math.random().toString(36).slice(2);
+    const script = document.createElement("script");
+    let finished = false;
+
+    const cleanup = () => {
+      if (finished) return;
+      finished = true;
+      delete window[callbackName];
+      script.remove();
+    };
+
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve(null);
+    }, timeoutMs);
+
+    window[callbackName] = (data) => {
+      clearTimeout(timer);
+      cleanup();
+      resolve(data);
+    };
+
+    script.onerror = () => {
+      clearTimeout(timer);
+      cleanup();
+      resolve(null);
+    };
+
+    const separator = url.includes("?") ? "&" : "?";
+    script.src = url + separator + "format=jsonp&callback=" + encodeURIComponent(callbackName);
+    document.head.appendChild(script);
+  });
+}
+
 async function censusGeocode(record) {
   try {
     const address = fullAddress(record);
@@ -551,18 +605,13 @@ async function censusGeocode(record) {
 
     const params = new URLSearchParams({
       address,
-      benchmark: "Public_AR_Current",
-      format: "json"
+      benchmark: "Public_AR_Current"
     });
 
-    const response = await fetch(
-      "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?" + params.toString(),
-      { headers: { "Accept": "application/json" } }
+    const data = await censusJsonp(
+      "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?" + params.toString()
     );
 
-    if (!response.ok) return null;
-
-    const data = await response.json();
     const match = data?.result?.addressMatches?.[0];
     const x = Number(match?.coordinates?.x);
     const y = Number(match?.coordinates?.y);
@@ -695,6 +744,124 @@ async function backfillMissingCoordinates() {
   }
 }
 
+async function retryMapPins() {
+  if (!currentUser) return;
+  geocodeAttempted.clear();
+
+  const button = el("retryPinsBtn");
+  button.disabled = true;
+  button.textContent = "Locating...";
+
+  try {
+    await backfillMissingCoordinates();
+  } finally {
+    button.disabled = false;
+    button.textContent = "Retry missing pins";
+  }
+}
+
+function closePinPicker() {
+  pinPickerRecordId = null;
+  pinPickerMarker = null;
+  el("pinDialog").close();
+}
+
+function setPinPickerMarker(lat, lng) {
+  if (!pinPickerMap) return;
+
+  if (pinPickerMarker) {
+    pinPickerMarker.setLatLng([lat, lng]);
+  } else {
+    pinPickerMarker = L.marker([lat, lng], { draggable: true }).addTo(pinPickerMap);
+    pinPickerMarker.on("dragend", () => {
+      const point = pinPickerMarker.getLatLng();
+      el("pinCoordinates").textContent = point.lat.toFixed(6) + ", " + point.lng.toFixed(6);
+    });
+  }
+
+  el("pinCoordinates").textContent = Number(lat).toFixed(6) + ", " + Number(lng).toFixed(6);
+}
+
+function openPinPicker(id) {
+  const record = records.find((item) => item.id === id);
+  if (!record) return;
+
+  pinPickerRecordId = id;
+  pinPickerMarker = null;
+  el("pinDialogTitle").textContent = "Set map pin";
+  el("pinAddress").textContent = fullAddress(record);
+  el("pinCoordinates").textContent = "Click the exact installation location on the map.";
+  el("pinDialog").showModal();
+
+  setTimeout(() => {
+    if (!pinPickerMap) {
+      pinPickerMap = L.map("pinPickerMap").setView([37.8, -96], 4);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap contributors'
+      }).addTo(pinPickerMap);
+
+      pinPickerMap.on("click", (event) => {
+        setPinPickerMarker(event.latlng.lat, event.latlng.lng);
+      });
+    }
+
+    pinPickerMap.invalidateSize();
+
+    if (record.latitude != null && record.longitude != null) {
+      setPinPickerMarker(Number(record.latitude), Number(record.longitude));
+      pinPickerMap.setView([record.latitude, record.longitude], 17);
+    } else {
+      pinPickerMap.setView([37.8, -96], 4);
+
+      // Make one best-effort automatic lookup to get the map near the address.
+      void geocodeRecord(record).then((coords) => {
+        if (!coords || pinPickerRecordId !== id) return;
+        setPinPickerMarker(coords.lat, coords.lng);
+        pinPickerMap.setView([coords.lat, coords.lng], 17);
+      });
+    }
+  }, 100);
+}
+
+async function savePinPicker() {
+  if (!currentUser || !pinPickerRecordId || !pinPickerMarker) {
+    showToast("Click the installation location on the map first.", true);
+    return;
+  }
+
+  const point = pinPickerMarker.getLatLng();
+  const button = el("savePinBtn");
+  button.disabled = true;
+  button.textContent = "Saving...";
+
+  try {
+    await updateDoc(doc(db, "installations", pinPickerRecordId), {
+      latitude: point.lat,
+      longitude: point.lng,
+      geocodeSource: "Manual",
+      updatedAt: serverTimestamp()
+    });
+
+    const record = records.find((item) => item.id === pinPickerRecordId);
+    if (record) {
+      record.latitude = point.lat;
+      record.longitude = point.lng;
+      record.geocodeSource = "Manual";
+    }
+
+    renderRecords();
+    renderMapMarkers();
+    closePinPicker();
+    showToast("Map pin saved.");
+  } catch (error) {
+    showToast("Could not save map pin: " + friendlyError(error), true);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Save pin";
+  }
+}
+
 function toggleMap() {
   const panel = el("mapPanel");
   const opening = panel.classList.contains("hidden");
@@ -774,12 +941,7 @@ function focusRecordOnMap(id) {
   if (!record) return;
 
   if (record.latitude == null || record.longitude == null) {
-    showToast("No verified street-level pin is available. Opening the address in Google Maps instead.");
-    window.open(
-      "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(fullAddress(record)),
-      "_blank",
-      "noopener"
-    );
+    openPinPicker(id);
     return;
   }
 
