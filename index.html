@@ -12,7 +12,7 @@
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
-  <link rel="stylesheet" href="./styles.css?v=3">
+  <link rel="stylesheet" href="./styles.css?v=4">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 </head>
 <body>
@@ -192,6 +192,28 @@
         <button id="savePropertyBtn" class="button primary" type="submit">Save property</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="photoDialog">
+    <div class="photo-dialog-content">
+      <div class="dialog-header">
+        <div>
+          <div class="eyebrow">DOOR PHOTOS</div>
+          <h2 id="photoDialogTitle">Door photos</h2>
+          <p id="photoDoorLabel" class="muted"></p>
+        </div>
+        <button id="closePhotoDialogBtn" class="icon-button" type="button" aria-label="Close">×</button>
+      </div>
+      <label class="photo-upload-label">Add photos
+        <input id="photoInput" type="file" accept="image/*" multiple>
+      </label>
+      <p class="muted photo-help">Photos are compressed before saving. Use this for the corresponding door at this property.</p>
+      <div id="photoStatus" class="status-text"></div>
+      <div id="photoGrid" class="photo-grid"></div>
+      <div class="dialog-actions">
+        <button id="closePhotosBtn" class="button secondary" type="button">Close</button>
+      </div>
+    </div>
   </dialog>
 
   <dialog id="pinDialog">
