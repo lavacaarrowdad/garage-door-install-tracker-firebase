@@ -547,3 +547,122 @@ dialog::backdrop { background: rgba(0,0,0,.68); backdrop-filter: blur(3px); }
     min-height: 300px;
   }
 }
+
+
+select {
+  width: 100%;
+  border: 1px solid #344761;
+  background: #091525;
+  color: var(--text);
+  border-radius: 11px;
+  padding: 12px 13px;
+  outline: none;
+}
+select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(56,189,248,.15);
+}
+.property-card {
+  gap: 12px;
+}
+.property-counts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0,1fr));
+  gap: 8px;
+}
+.property-counts span {
+  background: #0a1626;
+  border: 1px solid #21324a;
+  border-radius: 10px;
+  padding: 9px;
+  color: var(--muted);
+  font-size: .8rem;
+}
+.property-counts strong {
+  display: block;
+  color: var(--text);
+  font-size: 1.15rem;
+}
+.property-subsection {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid #21324a;
+  padding-top: 10px;
+}
+.subsection-title {
+  color: var(--accent);
+  font-size: .72rem;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.asset-line,
+.service-line {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  font-size: .85rem;
+}
+.asset-line span,
+.service-line span {
+  color: var(--muted);
+}
+.property-editor-section {
+  border-top: 1px solid var(--border);
+  margin-top: 20px;
+  padding-top: 16px;
+}
+.section-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.section-toolbar h3 {
+  margin-bottom: 3px;
+}
+.section-toolbar p {
+  margin-bottom: 0;
+}
+.asset-editor-list {
+  display: grid;
+  gap: 12px;
+}
+.asset-editor {
+  border: 1px solid #344761;
+  background: #0a1626;
+  border-radius: 13px;
+  padding: 13px;
+}
+.asset-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.asset-editor-header strong {
+  color: var(--accent);
+}
+.service-editor {
+  border-left: 4px solid var(--accent);
+}
+@media (max-width: 720px) {
+  .property-counts {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .property-counts span {
+    padding: 7px;
+    font-size: .72rem;
+  }
+  .section-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .section-toolbar .button {
+    width: 100%;
+    min-height: 42px;
+  }
+}
