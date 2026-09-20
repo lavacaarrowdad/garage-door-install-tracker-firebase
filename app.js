@@ -38,6 +38,7 @@ let records = [];
 let editingId = null;
 let map = null;
 let markerLayer = null;
+const geocodeAttempted = new Set();
 
 const el = (id) => document.getElementById(id);
 const fields = [
@@ -189,6 +190,7 @@ async function loadRecords() {
     renderRecords();
     ensureMap();
     renderMapMarkers();
+    void backfillMissingCoordinates();
   } catch (error) {
     console.error("Load failed:", error);
     showToast("Could not load installations: " + friendlyError(error), true);
@@ -542,6 +544,38 @@ function isConfidentStreetMatch(result, record) {
   return Number.isFinite(Number(result.lat)) && Number.isFinite(Number(result.lon));
 }
 
+async function censusGeocode(record) {
+  try {
+    const address = fullAddress(record);
+    if (!address) return null;
+
+    const params = new URLSearchParams({
+      address,
+      benchmark: "Public_AR_Current",
+      format: "json"
+    });
+
+    const response = await fetch(
+      "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?" + params.toString(),
+      { headers: { "Accept": "application/json" } }
+    );
+
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    const match = data?.result?.addressMatches?.[0];
+    const x = Number(match?.coordinates?.x);
+    const y = Number(match?.coordinates?.y);
+
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+
+    return { lat: y, lng: x, source: "Census" };
+  } catch (error) {
+    console.warn("Census geocoder failed:", error);
+    return null;
+  }
+}
+
 async function nominatimSearch(url) {
   try {
     const response = await fetch(url, {
@@ -550,12 +584,12 @@ async function nominatimSearch(url) {
     if (!response.ok) return [];
     return await response.json();
   } catch (error) {
-    console.warn("Geocoding request failed:", error);
+    console.warn("OpenStreetMap geocoding request failed:", error);
     return [];
   }
 }
 
-async function geocodeRecord(record) {
+async function nominatimGeocode(record) {
   const street = parseStreet(record.address_line1).full;
   const city = normalizeCity(record.city, record.state);
   const state = String(record.state || "").trim();
@@ -595,7 +629,70 @@ async function geocodeRecord(record) {
   }
 
   if (!match) return null;
-  return { lat: Number(match.lat), lng: Number(match.lon) };
+  return { lat: Number(match.lat), lng: Number(match.lon), source: "OpenStreetMap" };
+}
+
+async function geocodeRecord(record) {
+  // The U.S. Census geocoder handles many street addresses that OpenStreetMap
+  // does not contain, especially rural addresses. Use it first, then fall back
+  // to a strict OpenStreetMap street/house-number match.
+  const census = await censusGeocode(record);
+  if (census) return census;
+
+  return await nominatimGeocode(record);
+}
+
+async function backfillMissingCoordinates() {
+  if (!currentUser) return;
+
+  const missing = records.filter((record) =>
+    (record.latitude == null || record.longitude == null) &&
+    !geocodeAttempted.has(record.id)
+  );
+
+  if (!missing.length) return;
+
+  showToast("Locating " + missing.length + " installation" + (missing.length === 1 ? "" : "s") + " for the map...");
+
+  for (const record of missing) {
+    geocodeAttempted.add(record.id);
+
+    const coords = await geocodeRecord(record);
+    if (coords) {
+      try {
+        await updateDoc(doc(db, "installations", record.id), {
+          latitude: coords.lat,
+          longitude: coords.lng,
+          geocodeSource: coords.source || null,
+          updatedAt: serverTimestamp()
+        });
+
+        record.latitude = coords.lat;
+        record.longitude = coords.lng;
+        record.geocodeSource = coords.source || null;
+        renderMapMarkers();
+      } catch (error) {
+        console.warn("Could not save map coordinates:", error);
+      }
+    }
+
+    // Avoid hammering free public geocoding services.
+    await new Promise((resolve) => setTimeout(resolve, 800));
+  }
+
+  const stillMissing = records.filter((record) =>
+    record.latitude == null || record.longitude == null
+  ).length;
+
+  if (stillMissing) {
+    showToast(
+      stillMissing + " address" + (stillMissing === 1 ? "" : "es") +
+      " could not be pinned automatically. Tap Map on that record to open the address.",
+      true
+    );
+  } else {
+    showToast("Map pins updated.");
+  }
 }
 
 function toggleMap() {
