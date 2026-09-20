@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="description" content="Private garage door installation tracker">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Garage Door Install Tracker</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+  <link rel="stylesheet" href="./styles.css?v=1">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <div class="eyebrow">INSTALLATION DATABASE</div>
+      <h1>Garage Door Install Tracker</h1>
+      <div id="appVersion" class="muted" style="font-size:.72rem;margin-top:2px;">Firebase v1.0</div>
+    </div>
+    <div id="userArea" class="user-area hidden">
+      <span id="userEmail"></span>
+      <button id="signOutBtn" class="button secondary small" type="button">Sign out</button>
+    </div>
+  </header>
+
+  <main class="page-shell">
+    <section id="authView" class="auth-wrap">
+      <div class="panel auth-card">
+        <h2>Sign in</h2>
+        <p class="muted">Use the email and password provided for this installation tracker.</p>
+        <form id="authForm">
+          <label>Email
+            <input id="email" type="email" autocomplete="email" inputmode="email" required>
+          </label>
+          <label>Password
+            <input id="password" type="password" autocomplete="current-password" minlength="6" required>
+          </label>
+          <div class="button-row">
+            <button id="signInBtn" class="button primary" type="submit">Sign in</button>
+          </div>
+        </form>
+        <p id="authMessage" class="status-text"></p>
+      </div>
+    </section>
+
+    <section id="appView" class="hidden">
+      <div class="dashboard-row">
+        <div class="metric">
+          <span class="metric-label">INSTALLATIONS</span>
+          <strong id="recordCount">0</strong>
+        </div>
+        <div class="metric grow">
+          <span class="metric-label">FIND AN INSTALLATION</span>
+          <form id="searchForm" class="search-controls">
+            <input id="searchInput" type="search" autocomplete="off" placeholder="Customer, address, model, size, spring, color, date...">
+            <button id="searchBtn" class="button primary small" type="submit">Search</button>
+            <button id="clearSearchBtn" class="button secondary small" type="button">Clear</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="action-row">
+        <button id="addBtn" class="button primary" type="button">+ Add installation</button>
+        <button id="mapToggleBtn" class="button secondary" type="button">Hide map</button>
+        <button id="exportBtn" class="button secondary" type="button">Export CSV</button>
+      </div>
+
+      <section id="mapPanel" class="panel map-panel">
+        <div class="panel-heading">
+          <div>
+            <h2>Installation Map</h2>
+            <p class="muted">Only verified street-level matches are pinned. Click a pin to open that installation.</p>
+          </div>
+        </div>
+        <div id="map"></div>
+      </section>
+
+      <section class="records-section">
+        <div class="section-heading">
+          <h2>Installations</h2>
+          <span id="filterCount" class="muted"></span>
+        </div>
+        <div id="recordsList" class="records-grid"></div>
+        <div id="emptyState" class="empty-state hidden">
+          <h3>No installations yet</h3>
+          <p>Add your first garage door installation record.</p>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <dialog id="recordDialog">
+    <form id="recordForm">
+      <div class="dialog-header">
+        <div>
+          <div class="eyebrow">INSTALLATION RECORD</div>
+          <h2 id="dialogTitle">Add installation</h2>
+        </div>
+        <button id="closeDialogBtn" class="icon-button" type="button" aria-label="Close">×</button>
+      </div>
+
+      <div class="form-grid">
+        <label class="span-2">Customer name
+          <input id="customer_name" autocomplete="name">
+        </label>
+
+        <label class="span-2">Street address *
+          <input id="address_line1" autocomplete="street-address" required>
+        </label>
+        <label>City *
+          <input id="city" autocomplete="address-level2" required>
+        </label>
+        <label>State *
+          <input id="state" autocomplete="address-level1" required maxlength="30">
+        </label>
+        <label>ZIP
+          <input id="postal_code" autocomplete="postal-code">
+        </label>
+        <label>Install date *
+          <input id="install_date" type="date" required>
+        </label>
+
+        <div class="span-2 add-door-row">
+          <button id="addExtraDoorBtn" class="button secondary" type="button">+ Add another door</button>
+          <span class="muted">Use this for multi-door jobs.</span>
+        </div>
+
+        <div class="span-2 door-section-label">Door 1 / Primary door</div>
+
+        <label>Manufacturer
+          <input id="manufacturer" placeholder="Clopay, Wayne Dalton...">
+        </label>
+        <label>Model #
+          <input id="model_number">
+        </label>
+        <label>Door size
+          <input id="door_size" placeholder="16 x 7">
+        </label>
+        <label>Spring size
+          <input id="spring_size" placeholder=".250 x 2 x 31">
+        </label>
+
+        <label>Door type
+          <input id="door_type" list="doorTypes" placeholder="Raised panel">
+        </label>
+        <label>Color
+          <input id="color" list="colors" placeholder="White">
+        </label>
+        <label>Lift
+          <input id="lift_type" list="liftTypes" placeholder="Standard lift">
+        </label>
+        <label>Number of springs
+          <input id="spring_count" type="number" min="0" step="1">
+        </label>
+
+        <div id="extraDoorsContainer" class="span-2 extra-doors-container"></div>
+
+        <label class="span-2">Notes
+          <textarea id="notes" rows="4"></textarea>
+        </label>
+      </div>
+
+      <datalist id="doorTypes">
+        <option value="Raised Panel"></option>
+        <option value="Carriage House"></option>
+        <option value="Flush"></option>
+        <option value="Full View"></option>
+        <option value="Rolling Steel"></option>
+      </datalist>
+      <datalist id="colors">
+        <option value="White"></option>
+        <option value="Almond"></option>
+        <option value="Sandstone"></option>
+        <option value="Brown"></option>
+        <option value="Black"></option>
+      </datalist>
+      <datalist id="liftTypes">
+        <option value="Standard Lift"></option>
+        <option value="High Lift"></option>
+        <option value="Vertical Lift"></option>
+        <option value="Low Headroom"></option>
+      </datalist>
+
+      <div class="dialog-actions">
+        <button id="cancelBtn" class="button secondary" type="button">Cancel</button>
+        <button id="saveBtn" class="button primary" type="submit">Save installation</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast hidden" role="status"></div>
+  <script type="module" src="./app.js?v=1"></script>
+</body>
+</html>
