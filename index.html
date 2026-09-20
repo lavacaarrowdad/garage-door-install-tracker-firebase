@@ -4,23 +4,23 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0f172a">
-  <meta name="description" content="Private garage door installation tracker">
+  <meta name="description" content="Private property, garage door, opener, and service history tracker">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <title>Garage Door Install Tracker</title>
+  <title>Property Tracker</title>
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
-  <link rel="stylesheet" href="./styles.css?v=2">
+  <link rel="stylesheet" href="./styles.css?v=3">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 </head>
 <body>
   <header class="topbar">
     <div>
-      <div class="eyebrow">INSTALLATION DATABASE</div>
-      <h1>Garage Door Install Tracker</h1>
-      <div id="appVersion" class="muted" style="font-size:.72rem;margin-top:2px;">Firebase v1.3 · optional install date</div>
+      <div class="eyebrow">PROPERTY DATABASE</div>
+      <h1>Property Tracker</h1>
+      <div id="appVersion" class="muted" style="font-size:.72rem;margin-top:2px;">Firebase v2.0 · properties + history</div>
     </div>
     <div id="userArea" class="user-area hidden">
       <span id="userEmail"></span>
@@ -32,7 +32,7 @@
     <section id="authView" class="auth-wrap">
       <div class="panel auth-card">
         <h2>Sign in</h2>
-        <p class="muted">Use the email and password provided for this installation tracker.</p>
+        <p class="muted">Use the email and password provided for this property tracker.</p>
         <form id="authForm">
           <label>Email
             <input id="email" type="email" autocomplete="email" inputmode="email" required>
@@ -51,21 +51,21 @@
     <section id="appView" class="hidden">
       <div class="dashboard-row">
         <div class="metric">
-          <span class="metric-label">INSTALLATIONS</span>
-          <strong id="recordCount">0</strong>
+          <span class="metric-label">PROPERTIES</span>
+          <strong id="propertyCount">0</strong>
         </div>
         <div class="metric grow">
-          <span class="metric-label">FIND AN INSTALLATION</span>
+          <span class="metric-label">FIND A PROPERTY OR HISTORY ITEM</span>
           <form id="searchForm" class="search-controls">
-            <input id="searchInput" type="search" autocomplete="off" placeholder="Customer, address, model, size, spring, color, date...">
-            <button id="searchBtn" class="button primary small" type="submit">Search</button>
+            <input id="searchInput" type="search" autocomplete="off" placeholder="Customer, address, door, opener, model, spring, service...">
+            <button class="button primary small" type="submit">Search</button>
             <button id="clearSearchBtn" class="button secondary small" type="button">Clear</button>
           </form>
         </div>
       </div>
 
       <div class="action-row">
-        <button id="addBtn" class="button primary" type="button">+ Add installation</button>
+        <button id="addPropertyBtn" class="button primary" type="button">+ Add property</button>
         <button id="mapToggleBtn" class="button secondary" type="button">Hide map</button>
         <button id="exportBtn" class="button secondary" type="button">Export CSV</button>
       </div>
@@ -73,8 +73,8 @@
       <section id="mapPanel" class="panel map-panel">
         <div class="panel-heading">
           <div>
-            <h2>Installation Map</h2>
-            <p class="muted">Pins are created automatically when possible. If an address cannot be matched, use Set pin on that record.</p>
+            <h2>Property Map</h2>
+            <p class="muted">One pin per property. Missing locations can be set manually.</p>
           </div>
           <button id="retryPinsBtn" class="button secondary small" type="button">Retry missing pins</button>
         </div>
@@ -83,33 +83,32 @@
 
       <section class="records-section">
         <div class="section-heading">
-          <h2>Installations</h2>
+          <h2>Properties</h2>
           <span id="filterCount" class="muted"></span>
         </div>
-        <div id="recordsList" class="records-grid"></div>
+        <div id="propertiesList" class="records-grid"></div>
         <div id="emptyState" class="empty-state hidden">
-          <h3>No installations yet</h3>
-          <p>Add your first garage door installation record.</p>
+          <h3>No properties yet</h3>
+          <p>Add a property, then add its doors, openers, and service-call history.</p>
         </div>
       </section>
     </section>
   </main>
 
-  <dialog id="recordDialog">
-    <form id="recordForm">
+  <dialog id="propertyDialog">
+    <form id="propertyForm">
       <div class="dialog-header">
         <div>
-          <div class="eyebrow">INSTALLATION RECORD</div>
-          <h2 id="dialogTitle">Add installation</h2>
+          <div class="eyebrow">PROPERTY RECORD</div>
+          <h2 id="propertyDialogTitle">Add property</h2>
         </div>
-        <button id="closeDialogBtn" class="icon-button" type="button" aria-label="Close">×</button>
+        <button id="closePropertyDialogBtn" class="icon-button" type="button" aria-label="Close">×</button>
       </div>
 
       <div class="form-grid">
-        <label class="span-2">Customer name
+        <label class="span-2">Customer / property name
           <input id="customer_name" autocomplete="name">
         </label>
-
         <label class="span-2">Street address *
           <input id="address_line1" autocomplete="street-address" required>
         </label>
@@ -122,49 +121,43 @@
         <label>ZIP
           <input id="postal_code" autocomplete="postal-code">
         </label>
-        <label>Install date
-          <input id="install_date" type="date">
-        </label>
-
-        <div class="span-2 add-door-row">
-          <button id="addExtraDoorBtn" class="button secondary" type="button">+ Add another door</button>
-          <span class="muted">Use this for multi-door jobs.</span>
-        </div>
-
-        <div class="span-2 door-section-label">Door 1 / Primary door</div>
-
-        <label>Manufacturer
-          <input id="manufacturer" placeholder="Clopay, Wayne Dalton...">
-        </label>
-        <label>Model #
-          <input id="model_number">
-        </label>
-        <label>Door size
-          <input id="door_size" placeholder="16 x 7">
-        </label>
-        <label>Spring size
-          <input id="spring_size" placeholder=".250 x 2 x 31">
-        </label>
-
-        <label>Door type
-          <input id="door_type" list="doorTypes" placeholder="Raised panel">
-        </label>
-        <label>Color
-          <input id="color" list="colors" placeholder="White">
-        </label>
-        <label>Lift
-          <input id="lift_type" list="liftTypes" placeholder="Standard lift">
-        </label>
-        <label>Number of springs
-          <input id="spring_count" type="number" min="0" step="1">
-        </label>
-
-        <div id="extraDoorsContainer" class="span-2 extra-doors-container"></div>
-
-        <label class="span-2">Notes
-          <textarea id="notes" rows="4"></textarea>
+        <label class="span-2">Property notes
+          <textarea id="property_notes" rows="3"></textarea>
         </label>
       </div>
+
+      <section class="property-editor-section">
+        <div class="section-toolbar">
+          <div>
+            <h3>Doors</h3>
+            <p class="muted">Track every garage door at this property.</p>
+          </div>
+          <button id="addDoorBtn" class="button secondary small" type="button">+ Add door</button>
+        </div>
+        <div id="doorsContainer" class="asset-editor-list"></div>
+      </section>
+
+      <section class="property-editor-section">
+        <div class="section-toolbar">
+          <div>
+            <h3>Openers</h3>
+            <p class="muted">Track each opener separately from the door.</p>
+          </div>
+          <button id="addOpenerBtn" class="button secondary small" type="button">+ Add opener</button>
+        </div>
+        <div id="openersContainer" class="asset-editor-list"></div>
+      </section>
+
+      <section class="property-editor-section">
+        <div class="section-toolbar">
+          <div>
+            <h3>Service call history</h3>
+            <p class="muted">Add dated service history for a door, opener, or the overall property.</p>
+          </div>
+          <button id="addServiceBtn" class="button secondary small" type="button">+ Add service call</button>
+        </div>
+        <div id="serviceContainer" class="asset-editor-list"></div>
+      </section>
 
       <datalist id="doorTypes">
         <option value="Raised Panel"></option>
@@ -186,10 +179,17 @@
         <option value="Vertical Lift"></option>
         <option value="Low Headroom"></option>
       </datalist>
+      <datalist id="openerTypes">
+        <option value="Belt Drive"></option>
+        <option value="Chain Drive"></option>
+        <option value="Screw Drive"></option>
+        <option value="Wall Mount"></option>
+        <option value="Direct Drive"></option>
+      </datalist>
 
       <div class="dialog-actions">
-        <button id="cancelBtn" class="button secondary" type="button">Cancel</button>
-        <button id="saveBtn" class="button primary" type="submit">Save installation</button>
+        <button id="cancelPropertyBtn" class="button secondary" type="button">Cancel</button>
+        <button id="savePropertyBtn" class="button primary" type="submit">Save property</button>
       </div>
     </form>
   </dialog>
@@ -198,15 +198,15 @@
     <div class="pin-dialog-content">
       <div class="dialog-header">
         <div>
-          <div class="eyebrow">MAP LOCATION</div>
-          <h2 id="pinDialogTitle">Set map pin</h2>
+          <div class="eyebrow">PROPERTY LOCATION</div>
+          <h2>Set map pin</h2>
           <p id="pinAddress" class="muted"></p>
         </div>
         <button id="closePinDialogBtn" class="icon-button" type="button" aria-label="Close">×</button>
       </div>
-      <p class="muted">Click the exact installation location. You can also drag the marker after placing it.</p>
+      <p class="muted">Click the exact property location. You can drag the marker after placing it.</p>
       <div id="pinPickerMap" class="pin-picker-map"></div>
-      <p id="pinCoordinates" class="status-text">Click the exact installation location on the map.</p>
+      <p id="pinCoordinates" class="status-text">Click the exact property location on the map.</p>
       <div class="dialog-actions">
         <button id="openAddressBtn" class="button secondary" type="button">Open address in Google Maps</button>
         <button id="cancelPinBtn" class="button secondary" type="button">Cancel</button>
@@ -216,6 +216,6 @@
   </dialog>
 
   <div id="toast" class="toast hidden" role="status"></div>
-  <script type="module" src="./app.js?v=4"></script>
+  <script type="module" src="./app.js?v=5"></script>
 </body>
 </html>
