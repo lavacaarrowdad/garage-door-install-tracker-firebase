@@ -186,20 +186,29 @@ function normalizeProperty(raw) {
   ].some((value) => value !== null && value !== undefined && String(value).trim() !== "");
 
   let needsMigration = false;
-  if (!doors.length && hasLegacyDoor) {
-    doors.push({
-      manufacturer: raw.manufacturer ?? null,
-      model_number: raw.model_number ?? null,
-      door_size: raw.door_size ?? null,
-      spring_size: raw.spring_size ?? null,
-      spring_count: raw.spring_count ?? null,
-      door_type: raw.door_type ?? null,
-      color: raw.color ?? null,
-      lift_type: raw.lift_type ?? null,
-      install_date: raw.install_date ?? null,
-      notes: null
-    });
-    needsMigration = true;
+  if (!doors.length) {
+    if (hasLegacyDoor) {
+      doors.push({
+        manufacturer: raw.manufacturer ?? null,
+        model_number: raw.model_number ?? null,
+        door_size: raw.door_size ?? null,
+        spring_size: raw.spring_size ?? null,
+        spring_count: raw.spring_count ?? null,
+        door_type: raw.door_type ?? null,
+        color: raw.color ?? null,
+        lift_type: raw.lift_type ?? null,
+        install_date: raw.install_date ?? null,
+        notes: null
+      });
+    }
+
+    if (Array.isArray(raw.extraDoors)) {
+      raw.extraDoors.forEach((door) => doors.push({ ...door }));
+    }
+
+    if (hasLegacyDoor || (Array.isArray(raw.extraDoors) && raw.extraDoors.length)) {
+      needsMigration = true;
+    }
   }
 
   return {
