@@ -642,6 +642,13 @@ async function saveProperty(event) {
     payload[name] = value === "" ? null : value;
   });
 
+  const removedDoorIds = wasEditing
+    ? (existing?.doors || [])
+        .map((door) => door.id)
+        .filter(Boolean)
+        .filter((doorId) => !payload.doors.some((door) => door.id === doorId))
+    : [];
+
   if (!payload.address_line1 || !payload.city || !payload.state) {
     showToast("Street address, city and state are required.", true);
     return;
@@ -689,6 +696,12 @@ async function saveProperty(event) {
       await addDoc(collection(db, "installations"), payload);
     }
 
+    if (wasEditing && removedDoorIds.length) {
+      for (const doorId of removedDoorIds) {
+        await deleteDoorPhotos(editingPropertyId, doorId);
+      }
+    }
+
     closePropertyDialog();
     showToast(wasEditing ? "Property updated." : "Property saved.");
     await loadProperties();
@@ -711,12 +724,277 @@ async function deleteProperty(id) {
   if (!ok) return;
 
   try {
+    await deleteAllPropertyPhotos(id);
     await deleteDoc(doc(db, "installations", id));
     showToast("Property deleted.");
     await loadProperties();
   } catch (error) {
     showToast("Could not delete property: " + friendlyError(error), true);
   }
+}
+
+async function queryDoorPhotos(propertyId, doorId) {
+  if (!currentUser) return [];
+
+  try {
+    const q = query(
+      collection(db, "installations"),
+      where("userId", "==", currentUser.uid),
+      where("recordType", "==", "photo"),
+      where("propertyId", "==", propertyId),
+      where("doorId", "==", doorId)
+    );
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map((snap) => ({ id: snap.id, ...snap.data() }));
+  } catch (error) {
+    console.warn("Door photo query used fallback:", error);
+    const fallback = query(
+      collection(db, "installations"),
+      where("userId", "==", currentUser.uid),
+      where("recordType", "==", "photo")
+    );
+    const snapshot = await getDocs(fallback);
+    return snapshot.docs
+      .map((snap) => ({ id: snap.id, ...snap.data() }))
+      .filter((photo) => photo.propertyId === propertyId && photo.doorId === doorId);
+  }
+}
+
+async function queryPropertyPhotos(propertyId) {
+  if (!currentUser) return [];
+
+  try {
+    const q = query(
+      collection(db, "installations"),
+      where("userId", "==", currentUser.uid),
+      where("recordType", "==", "photo"),
+      where("propertyId", "==", propertyId)
+    );
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map((snap) => ({ id: snap.id, ...snap.data() }));
+  } catch (error) {
+    console.warn("Property photo query used fallback:", error);
+    const fallback = query(
+      collection(db, "installations"),
+      where("userId", "==", currentUser.uid),
+      where("recordType", "==", "photo")
+    );
+    const snapshot = await getDocs(fallback);
+    return snapshot.docs
+      .map((snap) => ({ id: snap.id, ...snap.data() }))
+      .filter((photo) => photo.propertyId === propertyId);
+  }
+}
+
+async function openDoorPhotos(propertyId, doorId, doorLabel) {
+  if (!propertyId || !doorId) return;
+
+  activePhotoPropertyId = propertyId;
+  activePhotoDoorId = doorId;
+  activePhotoDoorLabel = doorLabel || "Door";
+  activePhotos = [];
+
+  el("photoDialogTitle").textContent = "Door photos";
+  el("photoDoorLabel").textContent = activePhotoDoorLabel;
+  el("photoStatus").textContent = "Loading photos...";
+  el("photoGrid").innerHTML = "";
+  el("photoInput").value = "";
+  el("photoDialog").showModal();
+
+  try {
+    activePhotos = await queryDoorPhotos(propertyId, doorId);
+    activePhotos.sort((a, b) => {
+      const bt = b.createdAt?.seconds || 0;
+      const at = a.createdAt?.seconds || 0;
+      return bt - at;
+    });
+    renderDoorPhotos();
+    el("photoStatus").textContent = activePhotos.length
+      ? activePhotos.length + " photo" + (activePhotos.length === 1 ? "" : "s")
+      : "";
+  } catch (error) {
+    el("photoStatus").textContent = "Could not load photos: " + friendlyError(error);
+  }
+}
+
+function closePhotoDialog() {
+  activePhotoPropertyId = null;
+  activePhotoDoorId = null;
+  activePhotoDoorLabel = "";
+  activePhotos = [];
+  el("photoInput").value = "";
+  el("photoDialog").close();
+}
+
+function renderDoorPhotos() {
+  const grid = el("photoGrid");
+  grid.innerHTML = "";
+
+  if (!activePhotos.length) {
+    const empty = document.createElement("div");
+    empty.className = "photo-empty";
+    empty.textContent = "No photos for this door yet.";
+    grid.appendChild(empty);
+    return;
+  }
+
+  activePhotos.forEach((photo) => {
+    const card = document.createElement("div");
+    card.className = "photo-card";
+
+    const img = document.createElement("img");
+    img.src = photo.dataUrl;
+    img.alt = activePhotoDoorLabel + " photo";
+    img.loading = "lazy";
+
+    const footer = document.createElement("div");
+    footer.className = "photo-card-footer";
+
+    const name = document.createElement("div");
+    name.className = "photo-card-name";
+    name.textContent = photo.fileName || "Door photo";
+
+    const remove = document.createElement("button");
+    remove.className = "button danger small";
+    remove.type = "button";
+    remove.textContent = "Delete photo";
+    remove.addEventListener("click", () => deletePhoto(photo.id));
+
+    footer.append(name, remove);
+    card.append(img, footer);
+    grid.appendChild(card);
+  });
+}
+
+async function uploadSelectedPhotos(event) {
+  const files = Array.from(event.target.files || []);
+  if (!files.length || !currentUser || !activePhotoPropertyId || !activePhotoDoorId) return;
+
+  el("photoStatus").textContent = "Preparing " + files.length + " photo" + (files.length === 1 ? "" : "s") + "...";
+  el("photoInput").disabled = true;
+
+  let uploaded = 0;
+  try {
+    for (const file of files) {
+      if (!file.type.startsWith("image/")) continue;
+
+      el("photoStatus").textContent =
+        "Compressing photo " + (uploaded + 1) + " of " + files.length + "...";
+
+      const dataUrl = await compressPhoto(file);
+
+      await addDoc(collection(db, "installations"), {
+        userId: currentUser.uid,
+        recordType: "photo",
+        propertyId: activePhotoPropertyId,
+        doorId: activePhotoDoorId,
+        doorLabel: activePhotoDoorLabel,
+        fileName: file.name || "door-photo.jpg",
+        dataUrl,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+
+      uploaded += 1;
+    }
+
+    activePhotos = await queryDoorPhotos(activePhotoPropertyId, activePhotoDoorId);
+    activePhotos.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+    renderDoorPhotos();
+    el("photoStatus").textContent =
+      uploaded + " photo" + (uploaded === 1 ? "" : "s") + " uploaded.";
+  } catch (error) {
+    console.error("Photo upload failed:", error);
+    el("photoStatus").textContent = "Photo upload failed: " + friendlyError(error);
+  } finally {
+    el("photoInput").disabled = false;
+    el("photoInput").value = "";
+  }
+}
+
+async function deletePhoto(photoId) {
+  if (!photoId) return;
+  if (!window.confirm("Delete this photo?")) return;
+
+  try {
+    await deleteDoc(doc(db, "installations", photoId));
+    activePhotos = activePhotos.filter((photo) => photo.id !== photoId);
+    renderDoorPhotos();
+    el("photoStatus").textContent = activePhotos.length
+      ? activePhotos.length + " photo" + (activePhotos.length === 1 ? "" : "s")
+      : "Photo deleted.";
+  } catch (error) {
+    el("photoStatus").textContent = "Could not delete photo: " + friendlyError(error);
+  }
+}
+
+async function deleteDoorPhotos(propertyId, doorId) {
+  try {
+    const photos = await queryDoorPhotos(propertyId, doorId);
+    for (const photo of photos) {
+      await deleteDoc(doc(db, "installations", photo.id));
+    }
+  } catch (error) {
+    console.warn("Could not clean up removed door photos:", error);
+  }
+}
+
+async function deleteAllPropertyPhotos(propertyId) {
+  try {
+    const photos = await queryPropertyPhotos(propertyId);
+    for (const photo of photos) {
+      await deleteDoc(doc(db, "installations", photo.id));
+    }
+  } catch (error) {
+    console.warn("Could not clean up property photos:", error);
+  }
+}
+
+function readImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Could not read image file."));
+    reader.onload = () => resolve(reader.result);
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImage(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onerror = () => reject(new Error("This image format could not be opened."));
+    image.onload = () => resolve(image);
+    image.src = dataUrl;
+  });
+}
+
+async function compressPhoto(file) {
+  const source = await readImageFile(file);
+  const image = await loadImage(source);
+
+  let maxDimension = 1280;
+  let quality = 0.8;
+  const targetChars = 620000;
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight));
+    const width = Math.max(1, Math.round(image.naturalWidth * scale));
+    const height = Math.max(1, Math.round(image.naturalHeight * scale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(image, 0, 0, width, height);
+
+    const dataUrl = canvas.toDataURL("image/jpeg", quality);
+    if (dataUrl.length <= targetChars) return dataUrl;
+
+    maxDimension = Math.max(700, Math.round(maxDimension * 0.86));
+    quality = Math.max(0.48, quality - 0.06);
+  }
+
+  throw new Error("Photo is still too large after compression. Try a smaller image.");
 }
 
 function normalizeGeoText(value) {
