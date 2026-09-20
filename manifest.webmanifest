@@ -1,7 +1,7 @@
 {
-  "name": "Garage Door Install Tracker",
-  "short_name": "Door Tracker",
-  "description": "Track garage door installations, specifications and locations.",
+  "name": "Property Tracker",
+  "short_name": "Property Tracker",
+  "description": "Track properties, garage doors, openers, and service-call history.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
