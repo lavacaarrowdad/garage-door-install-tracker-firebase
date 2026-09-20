@@ -195,6 +195,7 @@ function setAuthMessage(message, isError = false) {
 }
 
 function normalizeProperty(raw) {
+  const doorsMissingIds = Array.isArray(raw.doors) && raw.doors.some((door) => !door.id);
   const doors = Array.isArray(raw.doors)
     ? raw.doors.map((door) => ({ ...door, id: door.id || newId("door") }))
     : [];
@@ -238,7 +239,7 @@ function normalizeProperty(raw) {
       ? raw.serviceCalls.map((item) => ({ ...item }))
       : (Array.isArray(raw.service_calls) ? raw.service_calls.map((item) => ({ ...item })) : []),
     property_notes: raw.property_notes ?? raw.notes ?? null,
-    _needsMigration: needsMigration || raw.recordType !== "property"
+    _needsMigration: needsMigration || doorsMissingIds || raw.recordType !== "property"
   };
 }
 
