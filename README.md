@@ -1,37 +1,32 @@
-# Garage Door Install Tracker — Firebase
+# Property Tracker — Firebase
 
-Firebase version of the Garage Door Install Tracker. This repository is separate from the original Supabase version.
+A GitHub Pages + Firebase app for tracking properties, garage doors, garage door openers, and service-call history.
 
-## Stack
-- GitHub Pages
-- Firebase Authentication (email/password)
-- Cloud Firestore
-- Leaflet + OpenStreetMap
-- Nominatim street-level geocoding
+This is the expanded version of the original Garage Door Install Tracker. Existing installation records are preserved and automatically treated as property records with their original door information migrated into the property's door list.
 
 ## Features
-- Private sign-in
-- Add, edit, and delete installations
-- Customer and address
-- Manufacturer / model
-- Door size
-- Spring size and count
-- Door type, color, and lift
-- Install date
-- Multiple doors per job
-- Search
-- CSV export
-- Installation map
-- Mobile-friendly layout
 
-## Security
-Each installation stores the signed-in user's Firebase UID in `userId`. Firestore rules restrict reads and writes to that user. The rules are also stored in `firestore.rules`.
+- Private Firebase email/password sign-in
+- Property/address records
+- Multiple garage doors per property
+- Multiple openers per property
+- Service-call history tied to each property
+- Separate add/edit forms for doors, openers, and service calls
+- Optional install dates
+- Search across property, door, opener, and service information
+- Property map with automatic and manual pin placement
+- CSV export
+- Mobile-friendly layout
+- No photo storage
+
+## Data storage
+
+The app continues to use the existing Firestore `installations` collection so the existing Firebase security rules remain valid. Each document is now treated as a property record and can contain `doors`, `openers`, and `serviceCalls` arrays.
 
 ## GitHub Pages
-Enable **Settings → Pages → Deploy from a branch → main → /(root)**.
+
+Published from `main` / `(root)`.
 
 Expected site:
-`https://lavacaarrowdad.github.io/garage-door-install-tracker-firebase/`
 
-Firebase Authentication authorized domains must include:
-`lavacaarrowdad.github.io`
+`https://lavacaarrowdad.github.io/garage-door-install-tracker-firebase/`
